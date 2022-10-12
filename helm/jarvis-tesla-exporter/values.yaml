@@ -18,7 +18,7 @@ config:
     refreshToken: abcd
     latitude: 52.377956
     longitude: 4.897070
-    geofenceMaxDistanceMeters: 100
+    geofenceRadiusMeters: 100
 
 logLevel: debug
 

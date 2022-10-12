@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::model::{
     Config, TeslaAccessToken, TeslaAccessTokenRequest, TeslaApiResponse, TeslaVehicle,
-    TeslaVehicleChargeState, TeslaVehicleData, TeslaVehicleState,
+    TeslaVehicleData, TeslaVehicleState,
 };
 
 const RETRY_INTERVAL_MS: u64 = 100;
@@ -39,15 +39,27 @@ impl MeasurementClient<Config> for TeslaApiClient {
 
         for vehicle in vehicles {
             debug!(
-                "State for vehicle {}: {}",
+                "State for vehicle {}: {:?}",
                 vehicle.display_name, vehicle.state
             );
 
             if vehicle.in_service || vehicle.state == TeslaVehicleState::Asleep {
+                info!("Vehicle is in service or asleep, skip storing samples");
                 continue;
             }
 
-            let vehicle_charge_state = self.get_vehicle_charge_state(&token, &vehicle)?;
+            let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
+
+            if !vehicle_data.inside_geofence(
+                config.latitude,
+                config.longitude,
+                config.geofence_radius_meters,
+            ) {
+                info!("Vehicle is not inside geofence, skip storing samples");
+                continue;
+            }
+
+            info!("Vehicle is inside geofence, storing samples");
 
             // store as gauge for timeline graphs
             measurement.samples.push(Sample {
@@ -56,7 +68,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 sample_type: SampleType::ElectricityConsumption,
                 sample_name: vehicle.display_name.clone(),
                 metric_type: MetricType::Gauge,
-                value: vehicle_charge_state.charger_power * 1000.0,
+                value: vehicle_data.charge_state.charger_power * 1000.0,
             });
 
             // store as counter for totals
@@ -66,7 +78,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 sample_type: SampleType::ElectricityConsumption,
                 sample_name: vehicle.display_name,
                 metric_type: MetricType::Counter,
-                value: vehicle_charge_state.charge_energy_added * 1000.0 * 3600.0,
+                value: vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0,
             });
         }
 
@@ -136,7 +148,6 @@ impl TeslaApiClient {
         Ok(vehicles_response.response)
     }
 
-    #[allow(dead_code)]
     pub fn get_vehicle_data(
         &self,
         token: &TeslaAccessToken,
@@ -168,41 +179,6 @@ impl TeslaApiClient {
 
         Ok(vehicle_data_response.response)
     }
-
-    pub fn get_vehicle_charge_state(
-        &self,
-        token: &TeslaAccessToken,
-        vehicle: &TeslaVehicle,
-    ) -> Result<TeslaVehicleChargeState, Box<dyn std::error::Error>> {
-        info!(
-            "Fetching vehicle charge state for {}...",
-            vehicle.display_name
-        );
-        let url = format!(
-            "https://owner-api.teslamotors.com/api/1/vehicles/{}/data_request/charge_state",
-            vehicle.id
-        );
-
-        debug!("GET {}", url);
-
-        let vehicle_charge_state_response: TeslaApiResponse<TeslaVehicleChargeState> = retry(
-            Exponential::from_millis_with_factor(RETRY_INTERVAL_MS, RETRY_FACTOR)
-                .map(jitter)
-                .take(RETRY_TAKES),
-            || {
-                reqwest::blocking::Client::new()
-                    .get(&url)
-                    .bearer_auth(token.access_token.clone())
-                    .send()
-            },
-        )?
-        .json()?;
-
-        // on error returns
-        // {"response":null,"error":"vehicle unavailable: {:error=>\"vehicle unavailable:\"}","error_description":""}
-
-        Ok(vehicle_charge_state_response.response)
-    }
 }
 
 #[cfg(test)]
@@ -224,7 +200,7 @@ mod tests {
             refresh_token: refresh_token,
             latitude: 0.0,
             longitude: 0.0,
-            geofence_max_distance_meters: 100.0,
+            geofence_radius_meters: 100.0,
         };
 
         // act
@@ -238,7 +214,7 @@ mod tests {
 
         for vehicle in vehicles {
             let vehicle_charge_state = tesla_api_client
-                .get_vehicle_charge_state(&token, &vehicle)
+                .get_vehicle_data(&token, &vehicle)
                 .expect("Failed getting vehicle charge state");
 
             debug!("{:?}", vehicle_charge_state);

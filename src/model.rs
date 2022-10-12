@@ -1,3 +1,4 @@
+use geoutils::Location;
 use jarvis_lib::config_client::SetDefaults;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +9,7 @@ pub struct Config {
     pub refresh_token: String,
     pub latitude: f64,
     pub longitude: f64,
-    pub geofence_max_distance_meters: f64,
+    pub geofence_radius_meters: f64,
 }
 
 impl SetDefaults for Config {
@@ -89,6 +90,20 @@ pub struct TeslaVehicleData {
     pub in_service: bool,
 
     pub charge_state: TeslaVehicleChargeState,
+    pub drive_state: TeslaVehicleDriveState,
+}
+
+impl TeslaVehicleData {
+    pub fn inside_geofence(&self, latitude: f64, longitude: f64, radius: f64) -> bool {
+        let tesla_location = Location::new(self.drive_state.latitude, self.drive_state.longitude);
+        let geofence_location = Location::new(latitude, longitude);
+
+        if let Ok(distance) = tesla_location.distance_to(&geofence_location) {
+            distance.meters() < radius
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -111,6 +126,16 @@ pub struct TeslaVehicleChargeState {
     pub timestamp: usize,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub struct TeslaVehicleDriveState {
+    pub gps_as_of: usize,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub heading: f64,
+    pub timestamp: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,6 +152,6 @@ mod tests {
         assert_eq!(config.refresh_token, "abcd".to_string());
         assert_eq!(config.latitude, 52.377956);
         assert_eq!(config.longitude, 4.897070);
-        assert_eq!(config.geofence_max_distance_meters, 100.0);
+        assert_eq!(config.geofence_radius_meters, 100.0);
     }
 }

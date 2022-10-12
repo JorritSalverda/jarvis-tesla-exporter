@@ -1,0 +1,84 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "jarvis-tesla-exporter.fullname" . }}
+  labels:
+    {{- include "jarvis-tesla-exporter.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  suspend: false
+  jobTemplate:
+    spec:
+      completions: 1
+      parallelism: 1
+      backoffLimit: 0
+      activeDeadlineSeconds: 240
+      ttlSecondsAfterFinished: {{ .Values.cronjob.ttlSecondsAfterFinished }}
+      template:
+        metadata:
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}  
+          labels:
+            {{- include "jarvis-tesla-exporter.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          serviceAccountName: {{ include "jarvis-tesla-exporter.serviceAccountName" . }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+          - name: {{ .Chart.Name }}
+            securityContext:
+              {{- toYaml .Values.securityContext | nindent 14 }}
+            image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+            imagePullPolicy: {{ .Values.image.pullPolicy }}    
+            env:
+            - name: RUST_LOG
+              value: {{ .Values.logLevel }}
+            - name: TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  key: timeout-seconds
+                  name: {{ include "jarvis-tesla-exporter.fullname" . }}
+            - name: NATS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "jarvis-tesla-exporter.fullname" . }}
+                  key: nats-host
+            - name: NATS_SUBJECT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "jarvis-tesla-exporter.fullname" . }}
+                  key: nats-subject
+            - name: MEASUREMENT_FILE_CONFIG_MAP_NAME
+              value: {{ include "jarvis-tesla-exporter.fullname" . }}
+            resources:
+              {{- toYaml .Values.resources | nindent 14 }}
+            volumeMounts:
+            - name: configs
+              mountPath: /configs
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          terminationGracePeriodSeconds: 300
+          volumes:
+          - name: configs
+            configMap:
+              name: {{ include "jarvis-tesla-exporter.fullname" . }}

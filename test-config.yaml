@@ -1,0 +1,5 @@
+location: My Home
+refreshToken: abcd
+latitude: 52.377956
+longitude: 4.897070
+geofenceMaxDistanceMeters: 100

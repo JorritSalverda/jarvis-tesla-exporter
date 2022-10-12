@@ -1,0 +1,16 @@
+{{- if .Values.rbac.enable -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "jarvis-tesla-exporter.fullname" . }}
+  labels:
+    {{- include "jarvis-tesla-exporter.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "jarvis-tesla-exporter.fullname" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "jarvis-tesla-exporter.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end -}}

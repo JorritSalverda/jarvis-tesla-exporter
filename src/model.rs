@@ -5,8 +5,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
-    pub location: String,
     pub refresh_token: String,
+    pub geofences: Vec<GeofenceConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GeofenceConfig {
+    pub location: String,
     pub latitude: f64,
     pub longitude: f64,
     pub geofence_radius_meters: f64,
@@ -94,13 +100,26 @@ pub struct TeslaVehicleData {
 }
 
 impl TeslaVehicleData {
-    pub fn inside_geofence(&self, latitude: f64, longitude: f64, radius: f64) -> bool {
+    pub fn inside_geofence(&self, geofence: &GeofenceConfig) -> bool {
         let tesla_location = Location::new(self.drive_state.latitude, self.drive_state.longitude);
-        let geofence_location = Location::new(latitude, longitude);
+        let geofence_location = Location::new(geofence.latitude, geofence.longitude);
 
         tesla_location
-            .is_in_circle(&geofence_location, Distance::from_meters(radius))
+            .is_in_circle(
+                &geofence_location,
+                Distance::from_meters(geofence.geofence_radius_meters),
+            )
             .unwrap_or(false)
+    }
+
+    pub fn in_geofence(&self, geofences: &[GeofenceConfig]) -> Option<GeofenceConfig> {
+        for geofence in geofences {
+            if self.inside_geofence(geofence) {
+                return Some(geofence.clone());
+            }
+        }
+
+        None
     }
 }
 
@@ -146,10 +165,11 @@ mod tests {
 
         let config: Config = config_client.read_config_from_file().unwrap();
 
-        assert_eq!(config.location, "My Home".to_string());
         assert_eq!(config.refresh_token, "abcd".to_string());
-        assert_eq!(config.latitude, 52.377956);
-        assert_eq!(config.longitude, 4.897070);
-        assert_eq!(config.geofence_radius_meters, 100.0);
+        assert_eq!(config.geofences.len(), 1);
+        assert_eq!(config.geofences[0].location, "My Home".to_string());
+        assert_eq!(config.geofences[0].latitude, 52.377956);
+        assert_eq!(config.geofences[0].longitude, 4.897070);
+        assert_eq!(config.geofences[0].geofence_radius_meters, 100.0);
     }
 }

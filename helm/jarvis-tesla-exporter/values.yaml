@@ -14,11 +14,12 @@ config:
   natsHost: jarvis-nats
   natsSubject: jarvis-measurements
   configYaml: |
-    location: My Home
     refreshToken: abcd
-    latitude: 52.377956
-    longitude: 4.897070
-    geofenceRadiusMeters: 100
+    geofences:
+    - location: My Home
+      latitude: 52.377956
+      longitude: 4.897070
+      geofenceRadiusMeters: 100
 
 logLevel: debug
 

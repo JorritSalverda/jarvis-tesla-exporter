@@ -25,14 +25,6 @@ impl MeasurementClient<Config> for TeslaApiClient {
         config: Config,
         _last_measurement: Option<Measurement>,
     ) -> Result<Measurement, Box<dyn Error>> {
-        let mut measurement = Measurement {
-            id: Uuid::new_v4().to_string(),
-            source: String::from("jarvis-tesla-exporter"),
-            location: config.location.clone(),
-            samples: Vec::new(),
-            measured_at_time: Utc::now(),
-        };
-
         let token = self.get_access_token(&config)?;
 
         let vehicles = self.get_vehicles(&token)?;
@@ -50,39 +42,48 @@ impl MeasurementClient<Config> for TeslaApiClient {
 
             let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
 
-            if !vehicle_data.inside_geofence(
-                config.latitude,
-                config.longitude,
-                config.geofence_radius_meters,
-            ) {
+            if let Some(geofence) = vehicle_data.in_geofence(&config.geofences) {
+                info!(
+                    "Vehicle is inside geofence {}, storing samples",
+                    geofence.location
+                );
+
+                let mut measurement = Measurement {
+                    id: Uuid::new_v4().to_string(),
+                    source: String::from("jarvis-tesla-exporter"),
+                    location: geofence.location.clone(),
+                    samples: Vec::new(),
+                    measured_at_time: Utc::now(),
+                };
+
+                // store as gauge for timeline graphs
+                measurement.samples.push(Sample {
+                    entity_type: EntityType::Device,
+                    entity_name: "jarvis-tesla-exporter".into(),
+                    sample_type: SampleType::ElectricityConsumption,
+                    sample_name: vehicle.display_name.clone(),
+                    metric_type: MetricType::Gauge,
+                    value: vehicle_data.charge_state.charger_power * 1000.0,
+                });
+
+                // store as counter for totals
+                measurement.samples.push(Sample {
+                    entity_type: EntityType::Device,
+                    entity_name: "jarvis-tesla-exporter".into(),
+                    sample_type: SampleType::ElectricityConsumption,
+                    sample_name: vehicle.display_name,
+                    metric_type: MetricType::Counter,
+                    value: vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0,
+                });
+            } else {
                 info!("Vehicle is not inside geofence, skip storing samples");
                 continue;
             }
-
-            info!("Vehicle is inside geofence, storing samples");
-
-            // store as gauge for timeline graphs
-            measurement.samples.push(Sample {
-                entity_type: EntityType::Device,
-                entity_name: "jarvis-tesla-exporter".into(),
-                sample_type: SampleType::ElectricityConsumption,
-                sample_name: vehicle.display_name.clone(),
-                metric_type: MetricType::Gauge,
-                value: vehicle_data.charge_state.charger_power * 1000.0,
-            });
-
-            // store as counter for totals
-            measurement.samples.push(Sample {
-                entity_type: EntityType::Device,
-                entity_name: "jarvis-tesla-exporter".into(),
-                sample_type: SampleType::ElectricityConsumption,
-                sample_name: vehicle.display_name,
-                metric_type: MetricType::Counter,
-                value: vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0,
-            });
         }
 
-        Ok(measurement)
+        Err(Box::<dyn Error>::from(
+            "No vehicles were inside of any of the configured geofences",
+        ))
     }
 }
 
@@ -185,6 +186,8 @@ impl TeslaApiClient {
 mod tests {
     use std::env;
 
+    use crate::model::GeofenceConfig;
+
     use super::*;
 
     #[test]
@@ -196,11 +199,13 @@ mod tests {
             .expect("Environment variable TESLA_AUTH_REFRESH_TOKEN not set");
 
         let config: Config = Config {
-            location: "My Home".into(),
             refresh_token: refresh_token,
-            latitude: 0.0,
-            longitude: 0.0,
-            geofence_radius_meters: 100.0,
+            geofences: vec![GeofenceConfig {
+                location: "My Home".into(),
+                latitude: 0.0,
+                longitude: 0.0,
+                geofence_radius_meters: 100.0,
+            }],
         };
 
         // act

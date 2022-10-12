@@ -75,6 +75,8 @@ impl MeasurementClient<Config> for TeslaApiClient {
                     metric_type: MetricType::Counter,
                     value: vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0,
                 });
+
+                return Ok(measurement);
             } else {
                 info!("Vehicle is not inside geofence, skip storing samples");
                 continue;
@@ -82,7 +84,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
         }
 
         Err(Box::<dyn Error>::from(
-            "No vehicles were inside of any of the configured geofences",
+            "No vehicles were inside of any of the configured geofences and awake",
         ))
     }
 }

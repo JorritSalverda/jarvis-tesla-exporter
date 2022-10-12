@@ -1,4 +1,4 @@
-use geoutils::Location;
+use geoutils::{Distance, Location};
 use jarvis_lib::config_client::SetDefaults;
 use serde::{Deserialize, Serialize};
 
@@ -98,11 +98,9 @@ impl TeslaVehicleData {
         let tesla_location = Location::new(self.drive_state.latitude, self.drive_state.longitude);
         let geofence_location = Location::new(latitude, longitude);
 
-        if let Ok(distance) = tesla_location.distance_to(&geofence_location) {
-            distance.meters() < radius
-        } else {
-            false
-        }
+        tesla_location
+            .is_in_circle(&geofence_location, Distance::from_meters(radius))
+            .unwrap_or(false)
     }
 }
 

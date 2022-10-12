@@ -24,7 +24,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
         &self,
         config: Config,
         _last_measurement: Option<Measurement>,
-    ) -> Result<Measurement, Box<dyn Error>> {
+    ) -> Result<Option<Measurement>, Box<dyn Error>> {
         let token = self.get_access_token(&config)?;
 
         let vehicles = self.get_vehicles(&token)?;
@@ -76,16 +76,15 @@ impl MeasurementClient<Config> for TeslaApiClient {
                     value: vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0,
                 });
 
-                return Ok(measurement);
+                return Ok(Some(measurement));
             } else {
                 info!("Vehicle is not inside geofence, skip storing samples");
                 continue;
             }
         }
 
-        Err(Box::<dyn Error>::from(
-            "No vehicles were inside of any of the configured geofences and awake",
-        ))
+        info!("No vehicles were inside of any of the configured geofences and awake");
+        Ok(None)
     }
 }
 

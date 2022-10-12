@@ -927,7 +927,7 @@ checksum = "6c8af84674fe1f223a982c933a0ee1086ac4d4052aa0fb8060c12c6ad838e754"
 [[package]]
 name = "jarvis-lib"
 version = "0.1.0"
-source = "git+https://github.com/JorritSalverda/jarvis-lib?tag=0.1.51#189b8eed3eb4ea8b4cb69b3fd682857d091505b3"
+source = "git+https://github.com/JorritSalverda/jarvis-lib?tag=0.1.52#59364ec0daa69062a7c6d5cde02a77299c8de9bd"
 dependencies = [
  "async-trait",
  "chrono",

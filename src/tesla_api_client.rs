@@ -51,7 +51,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 let mut measurement = Measurement {
                     id: Uuid::new_v4().to_string(),
                     source: String::from("jarvis-tesla-exporter"),
-                    location: geofence.location.clone(),
+                    location: geofence.location,
                     samples: Vec::new(),
                     measured_at_time: Utc::now(),
                 };

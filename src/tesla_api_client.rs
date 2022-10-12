@@ -3,7 +3,7 @@ use std::error::Error;
 use chrono::Utc;
 use jarvis_lib::model::{EntityType, MetricType, Sample, SampleType};
 use jarvis_lib::{measurement_client::MeasurementClient, model::Measurement};
-use log::debug;
+use log::{debug, info};
 use retry::delay::{jitter, Exponential};
 use retry::retry;
 use uuid::Uuid;
@@ -38,10 +38,12 @@ impl MeasurementClient<Config> for TeslaApiClient {
         let vehicles = self.get_vehicles(&token)?;
 
         for vehicle in vehicles {
-            if vehicle.in_service
-                || (vehicle.state != TeslaVehicleState::Charging
-                    && vehicle.state != TeslaVehicleState::Online)
-            {
+            debug!(
+                "State for vehicle {}: {}",
+                vehicle.display_name, vehicle.state
+            );
+
+            if vehicle.in_service || vehicle.state == TeslaVehicleState::Asleep {
                 continue;
             }
 
@@ -81,6 +83,7 @@ impl TeslaApiClient {
         &self,
         config: &Config,
     ) -> Result<TeslaAccessToken, Box<dyn std::error::Error>> {
+        info!("Fetching access token...");
         let url = "https://auth.tesla.com/oauth2/v3/token";
 
         debug!("POST {}", url);
@@ -112,6 +115,7 @@ impl TeslaApiClient {
         &self,
         token: &TeslaAccessToken,
     ) -> Result<Vec<TeslaVehicle>, Box<dyn std::error::Error>> {
+        info!("Fetching vehicles...");
         let url = "https://owner-api.teslamotors.com/api/1/vehicles";
 
         debug!("GET {}", url);
@@ -138,6 +142,7 @@ impl TeslaApiClient {
         token: &TeslaAccessToken,
         vehicle: &TeslaVehicle,
     ) -> Result<TeslaVehicleData, Box<dyn std::error::Error>> {
+        info!("Fetching vehicle date for {}...", vehicle.display_name);
         let url = format!(
             "https://owner-api.teslamotors.com/api/1/vehicles/{}/vehicle_data",
             vehicle.id
@@ -169,6 +174,10 @@ impl TeslaApiClient {
         token: &TeslaAccessToken,
         vehicle: &TeslaVehicle,
     ) -> Result<TeslaVehicleChargeState, Box<dyn std::error::Error>> {
+        info!(
+            "Fetching vehicle charge state for {}...",
+            vehicle.display_name
+        );
         let url = format!(
             "https://owner-api.teslamotors.com/api/1/vehicles/{}/data_request/charge_state",
             vehicle.id

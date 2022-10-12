@@ -44,7 +44,6 @@ pub struct TeslaAccessToken {
 #[serde(rename_all = "snake_case")]
 pub struct TeslaApiResponse<T> {
     pub response: T,
-    pub count: usize,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]

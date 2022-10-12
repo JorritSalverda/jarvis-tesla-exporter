@@ -21,7 +21,7 @@ config:
       longitude: 4.897070
       geofenceRadiusMeters: 100
 
-logLevel: debug
+logLevel: debug,reqwest=info
 
 image:
   repository: jsalverda/jarvis-tesla-exporter

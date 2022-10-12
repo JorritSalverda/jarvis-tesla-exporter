@@ -38,7 +38,10 @@ impl MeasurementClient<Config> for TeslaApiClient {
         let vehicles = self.get_vehicles(&token)?;
 
         for vehicle in vehicles {
-            if vehicle.in_service || vehicle.state != TeslaVehicleState::Charging {
+            if vehicle.in_service
+                || (vehicle.state != TeslaVehicleState::Charging
+                    && vehicle.state != TeslaVehicleState::Online)
+            {
                 continue;
             }
 

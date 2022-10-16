@@ -72,21 +72,22 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 });
 
                 // store as counter for totals
-                let last_charger_power: f64 = if let Some(last_measurement) = last_measurement {
-                    last_measurement
-                        .samples
-                        .iter()
-                        .find(|s| {
-                            s.entity_type == EntityType::Device
-                                && s.sample_type == SampleType::ElectricityConsumption
-                                && s.sample_name == vehicle.display_name
-                                && s.metric_type == MetricType::Gauge
-                        })
-                        .map(|s| s.value)
-                        .unwrap_or(0.0)
-                } else {
-                    0.0
-                };
+                let last_charger_power: f64 =
+                    if let Some(last_measurement) = last_measurement.as_ref() {
+                        last_measurement
+                            .samples
+                            .iter()
+                            .find(|s| {
+                                s.entity_type == EntityType::Device
+                                    && s.sample_type == SampleType::ElectricityConsumption
+                                    && s.sample_name == vehicle.display_name
+                                    && s.metric_type == MetricType::Gauge
+                            })
+                            .map(|s| s.value)
+                            .unwrap_or(0.0)
+                    } else {
+                        0.0
+                    };
                 let current_charge_energy_added = if vehicle_data.charger_power > 0.0
                     || last_charger_power > 0.0 && vehicle_data.charger_power == 0.0
                 {
@@ -96,7 +97,24 @@ impl MeasurementClient<Config> for TeslaApiClient {
 
                     vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0
                 } else {
-                    0.0
+                    let last_charge_energy_added: f64 =
+                        if let Some(last_measurement) = last_measurement {
+                            last_measurement
+                                .samples
+                                .iter()
+                                .find(|s| {
+                                    s.entity_type == EntityType::Device
+                                        && s.sample_type == SampleType::ElectricityConsumption
+                                        && s.sample_name == vehicle.display_name
+                                        && s.metric_type == MetricType::Counter
+                                })
+                                .map(|s| s.value)
+                                .unwrap_or(0.0)
+                        } else {
+                            0.0
+                        };
+
+                    last_charge_energy_added
                 };
                 measurement.samples.push(Sample {
                     entity_type: EntityType::Device,

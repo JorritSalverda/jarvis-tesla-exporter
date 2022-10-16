@@ -222,15 +222,16 @@ impl TeslaApiClient {
             };
 
             let msg = socket.read_message()?;
-            debug!("Received: {}", msg);
+            debug!("Received: {:?}", msg);
 
             if msg.is_close() {
                 return Err(Box::<dyn Error>::from("Received close message"));
             }
 
-            if !msg.is_text() {
-                continue;
-            }
+            // if !msg.is_text() {
+            //     debug!("Message is not of type text, skipping");
+            //     continue;
+            // }
 
             let msg_text = msg.into_text()?;
             let msg_value: serde_json::Value = serde_json::from_str(&msg_text)?;

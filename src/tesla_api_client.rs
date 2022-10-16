@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::time::Instant;
 
 use chrono::Utc;
 use jarvis_lib::model::{EntityType, MetricType, Sample, SampleType};
@@ -214,9 +215,18 @@ impl TeslaApiClient {
         };
 
         socket.write_message(Message::Text(serde_json::to_string(&subscribe_message)?))?;
+        let start = Instant::now();
         loop {
+            if start.elapsed().as_secs() > 300 {
+                return Err(Box::<dyn Error>::from("Timed out after 300 seconds"));
+            };
+
             let msg = socket.read_message()?;
             debug!("Received: {}", msg);
+
+            if msg.is_close() {
+                return Err(Box::<dyn Error>::from("Received close message"));
+            }
 
             if !msg.is_text() {
                 continue;
@@ -225,44 +235,55 @@ impl TeslaApiClient {
             let msg_text = msg.into_text()?;
             let msg_value: serde_json::Value = serde_json::from_str(&msg_text)?;
             if let Value::String(msg_type) = &msg_value["msg_type"] {
-                if msg_type == "data:update" {
-                    let data_update_message: TeslaStreamingApiMessage =
-                        serde_json::from_str(&msg_text)?;
+                match msg_type.as_str() {
+                    "data:update" => {
+                        let data_update_message: TeslaStreamingApiMessage =
+                            serde_json::from_str(&msg_text)?;
 
-                    if data_update_message.tag != vehicle.vehicle_id.to_string() {
-                        warn!("Receiving data for another vehicle");
-                        continue;
+                        if data_update_message.tag != vehicle.vehicle_id.to_string() {
+                            warn!("Receiving data for another vehicle");
+                            continue;
+                        }
+
+                        let values: Vec<String> = data_update_message
+                            .value
+                            .split(',')
+                            .map(str::to_string)
+                            .collect();
+
+                        if values.len() != 4 {
+                            warn!("Receiving incorrect number of values");
+                            continue;
+                        }
+
+                        return Ok(TeslaVehicleStreamingData {
+                            latitude: values
+                                .get(1)
+                                .unwrap_or(&"0.0".to_string())
+                                .parse()
+                                .unwrap_or(0.0),
+                            longitude: values
+                                .get(2)
+                                .unwrap_or(&"0.0".to_string())
+                                .parse()
+                                .unwrap_or(0.0),
+                            charger_power: values
+                                .get(3)
+                                .unwrap_or(&"0.0".to_string())
+                                .parse()
+                                .unwrap_or(0.0),
+                            charge_energy_added: 0.0,
+                        });
                     }
-
-                    let values: Vec<String> = data_update_message
-                        .value
-                        .split(',')
-                        .map(str::to_string)
-                        .collect();
-
-                    if values.len() != 4 {
-                        warn!("Receiving incorrect number of values");
-                        continue;
+                    "data:error" => {
+                        return Err(Box::<dyn Error>::from(format!(
+                            "Received error message: {}",
+                            &msg_value["error_type"]
+                        )));
                     }
-
-                    return Ok(TeslaVehicleStreamingData {
-                        latitude: values
-                            .get(1)
-                            .unwrap_or(&"0.0".to_string())
-                            .parse()
-                            .unwrap_or(0.0),
-                        longitude: values
-                            .get(2)
-                            .unwrap_or(&"0.0".to_string())
-                            .parse()
-                            .unwrap_or(0.0),
-                        charger_power: values
-                            .get(3)
-                            .unwrap_or(&"0.0".to_string())
-                            .parse()
-                            .unwrap_or(0.0),
-                        charge_energy_added: 0.0,
-                    });
+                    _ => {
+                        debug!("Unhandled message type {}", msg_type);
+                    }
                 }
             }
         }

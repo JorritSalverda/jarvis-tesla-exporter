@@ -238,7 +238,7 @@ impl TeslaApiClient {
             msg_type: "data:subscribe_oauth".into(),
             tag: vehicle.vehicle_id.to_string(),
             token: Some(token.access_token.clone()),
-            value: "est_lat,est_lng,power".into(),
+            value: "est_lat,est_lng,power,speed".into(),
         };
 
         socket.write_message(Message::Text(serde_json::to_string(&subscribe_message)?))?;
@@ -285,6 +285,12 @@ impl TeslaApiClient {
                             continue;
                         }
 
+                        let speed = values
+                            .get(4)
+                            .unwrap_or(&"0.0".to_string())
+                            .parse()
+                            .unwrap_or(0.0);
+
                         return Ok(TeslaVehicleStreamingData {
                             latitude: values
                                 .get(1)
@@ -296,11 +302,15 @@ impl TeslaApiClient {
                                 .unwrap_or(&"0.0".to_string())
                                 .parse()
                                 .unwrap_or(0.0),
-                            charger_power: values
-                                .get(3)
-                                .unwrap_or(&"0.0".to_string())
-                                .parse()
-                                .unwrap_or(0.0),
+                            charger_power: if speed == 0.0 {
+                                -1.0 * values
+                                    .get(3)
+                                    .unwrap_or(&"0.0".to_string())
+                                    .parse()
+                                    .unwrap_or(0.0)
+                            } else {
+                                0.0
+                            },
                             charge_energy_added: 0.0,
                         });
                     }

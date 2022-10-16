@@ -27,7 +27,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
     fn get_measurement(
         &self,
         config: Config,
-        _last_measurement: Option<Measurement>,
+        last_measurement: Option<Measurement>,
     ) -> Result<Option<Measurement>, Box<dyn Error>> {
         let token = self.get_access_token(&config)?;
 
@@ -61,24 +61,51 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 };
 
                 // store as gauge for timeline graphs
+                let current_charger_power = vehicle_data.charger_power * 1000.0;
+                measurement.samples.push(Sample {
+                    entity_type: EntityType::Device,
+                    entity_name: "jarvis-tesla-exporter".into(),
+                    sample_type: SampleType::ElectricityConsumption,
+                    sample_name: vehicle.display_name.clone(),
+                    metric_type: MetricType::Gauge,
+                    value: current_charger_power,
+                });
+
+                // store as counter for totals
+                let last_charger_power: f64 = if let Some(last_measurement) = last_measurement {
+                    last_measurement
+                        .samples
+                        .iter()
+                        .find(|s| {
+                            s.entity_type == EntityType::Device
+                                && s.sample_type == SampleType::ElectricityConsumption
+                                && s.sample_name == vehicle.display_name
+                                && s.metric_type == MetricType::Gauge
+                        })
+                        .map(|s| s.value)
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+                let current_charge_energy_added = if vehicle_data.charger_power > 0.0
+                    || last_charger_power > 0.0 && vehicle_data.charger_power == 0.0
+                {
+                    // get vehicle data through regular api if vehicle is charging or has just finished charging
+                    // skip otherwise, because it keeps the vehicle awake
+                    let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
+
+                    vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0
+                } else {
+                    0.0
+                };
                 measurement.samples.push(Sample {
                     entity_type: EntityType::Device,
                     entity_name: "jarvis-tesla-exporter".into(),
                     sample_type: SampleType::ElectricityConsumption,
                     sample_name: vehicle.display_name,
-                    metric_type: MetricType::Gauge,
-                    value: vehicle_data.charger_power * 1000.0,
+                    metric_type: MetricType::Counter,
+                    value: current_charge_energy_added,
                 });
-
-                // store as counter for totals
-                // measurement.samples.push(Sample {
-                //     entity_type: EntityType::Device,
-                //     entity_name: "jarvis-tesla-exporter".into(),
-                //     sample_type: SampleType::ElectricityConsumption,
-                //     sample_name: vehicle.display_name,
-                //     metric_type: MetricType::Counter,
-                //     value: vehicle_data.charge_energy_added * 1000.0 * 3600.0,
-                // });
 
                 return Ok(Some(measurement));
             } else {

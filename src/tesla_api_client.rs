@@ -222,7 +222,7 @@ impl TeslaApiClient {
             };
 
             let msg = socket.read_message()?;
-            debug!("Received: {:?}", msg);
+            debug!("Received: {}", msg);
 
             if msg.is_close() {
                 return Err(Box::<dyn Error>::from("Received close message"));

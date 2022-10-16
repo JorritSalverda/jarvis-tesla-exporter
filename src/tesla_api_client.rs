@@ -280,7 +280,7 @@ impl TeslaApiClient {
                             .map(str::to_string)
                             .collect();
 
-                        if values.len() != 4 {
+                        if values.len() != 5 {
                             warn!("Receiving incorrect number of values");
                             continue;
                         }

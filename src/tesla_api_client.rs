@@ -228,18 +228,19 @@ impl TeslaApiClient {
                 return Err(Box::<dyn Error>::from("Received close message"));
             }
 
-            // if !msg.is_text() {
-            //     debug!("Message is not of type text, skipping");
-            //     continue;
-            // }
+            if !msg.is_binary() {
+                debug!("Message is not of type binary, skipping");
+                continue;
+            }
 
-            let msg_text = msg.into_text()?;
-            let msg_value: serde_json::Value = serde_json::from_str(&msg_text)?;
+            let msg_data = msg.into_data();
+
+            let msg_value: serde_json::Value = serde_json::from_slice(&msg_data)?;
             if let Value::String(msg_type) = &msg_value["msg_type"] {
                 match msg_type.as_str() {
                     "data:update" => {
                         let data_update_message: TeslaStreamingApiMessage =
-                            serde_json::from_str(&msg_text)?;
+                            serde_json::from_slice(&msg_data)?;
 
                         if data_update_message.tag != vehicle.vehicle_id.to_string() {
                             warn!("Receiving data for another vehicle");

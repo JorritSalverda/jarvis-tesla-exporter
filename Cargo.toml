@@ -9,6 +9,7 @@ include = ["src/**/*", "LICENSE", "README.md"]
 
 [dependencies]
 chrono = "0.4"
+ctor = "0.1"
 geoutils = "0.5"
 json_env_logger = { version = "0.1", features = ["iso-timestamps", "backtrace"] }
 log = { version = "0.4", features = ["kv_unstable_std"]}
@@ -20,4 +21,4 @@ tokio = { version = "1.5", features = ["macros"] }
 uuid = { version = "0.8", features = ["v4"] }
 jarvis-lib = { git = "https://github.com/JorritSalverda/jarvis-lib", tag = "0.1.52" }
 kube = { version = "0.70", features = ["runtime", "derive"] }
-mdns-sd = "0.5"
+tungstenite = { version = "0.17", features = ["native-tls"] }

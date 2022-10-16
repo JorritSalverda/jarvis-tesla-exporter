@@ -1,11 +1,11 @@
-mod tesla_api_client;
 mod model;
+mod tesla_api_client;
 
-use tesla_api_client::TeslaApiClient;
 use jarvis_lib::config_client::{ConfigClient, ConfigClientConfig};
 use jarvis_lib::exporter_service::{ExporterService, ExporterServiceConfig};
 use jarvis_lib::nats_client::{NatsClient, NatsClientConfig};
 use jarvis_lib::state_client::{StateClient, StateClientConfig};
+use tesla_api_client::TeslaApiClient;
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,4 +33,10 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     exporter_service.run().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+#[ctor::ctor]
+fn init() {
+    json_env_logger::init();
 }

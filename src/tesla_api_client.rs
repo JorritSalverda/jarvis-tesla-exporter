@@ -3,14 +3,17 @@ use std::error::Error;
 use chrono::Utc;
 use jarvis_lib::model::{EntityType, MetricType, Sample, SampleType};
 use jarvis_lib::{measurement_client::MeasurementClient, model::Measurement};
-use log::{debug, info};
+use log::{debug, info, warn};
+use reqwest::Url;
 use retry::delay::{jitter, Exponential};
 use retry::retry;
+use serde_json::Value;
+use tungstenite::{connect, Message};
 use uuid::Uuid;
 
 use crate::model::{
-    Config, TeslaAccessToken, TeslaAccessTokenRequest, TeslaApiResponse, TeslaVehicle,
-    TeslaVehicleData, TeslaVehicleState,
+    Config, TeslaAccessToken, TeslaAccessTokenRequest, TeslaApiResponse, TeslaStreamingApiMessage,
+    TeslaVehicle, TeslaVehicleData, TeslaVehicleState, TeslaVehicleStreamingData,
 };
 
 const RETRY_INTERVAL_MS: u64 = 100;
@@ -40,7 +43,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 continue;
             }
 
-            let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
+            let vehicle_data = self.get_streaming_data(&token, &vehicle)?;
 
             if let Some(geofence) = vehicle_data.in_geofence(&config.geofences) {
                 info!(
@@ -61,20 +64,20 @@ impl MeasurementClient<Config> for TeslaApiClient {
                     entity_type: EntityType::Device,
                     entity_name: "jarvis-tesla-exporter".into(),
                     sample_type: SampleType::ElectricityConsumption,
-                    sample_name: vehicle.display_name.clone(),
+                    sample_name: vehicle.display_name,
                     metric_type: MetricType::Gauge,
-                    value: vehicle_data.charge_state.charger_power * 1000.0,
+                    value: vehicle_data.charger_power * 1000.0,
                 });
 
                 // store as counter for totals
-                measurement.samples.push(Sample {
-                    entity_type: EntityType::Device,
-                    entity_name: "jarvis-tesla-exporter".into(),
-                    sample_type: SampleType::ElectricityConsumption,
-                    sample_name: vehicle.display_name,
-                    metric_type: MetricType::Counter,
-                    value: vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0,
-                });
+                // measurement.samples.push(Sample {
+                //     entity_type: EntityType::Device,
+                //     entity_name: "jarvis-tesla-exporter".into(),
+                //     sample_type: SampleType::ElectricityConsumption,
+                //     sample_name: vehicle.display_name,
+                //     metric_type: MetricType::Counter,
+                //     value: vehicle_data.charge_energy_added * 1000.0 * 3600.0,
+                // });
 
                 return Ok(Some(measurement));
             } else {
@@ -150,6 +153,7 @@ impl TeslaApiClient {
         Ok(vehicles_response.response)
     }
 
+    #[allow(dead_code)]
     pub fn get_vehicle_data(
         &self,
         token: &TeslaAccessToken,
@@ -180,6 +184,88 @@ impl TeslaApiClient {
         // {"response":null,"error":"vehicle unavailable: {:error=>\"vehicle unavailable:\"}","error_description":""}
 
         Ok(vehicle_data_response.response)
+    }
+
+    pub fn get_streaming_data(
+        &self,
+        token: &TeslaAccessToken,
+        vehicle: &TeslaVehicle,
+    ) -> Result<TeslaVehicleStreamingData, Box<dyn Error>> {
+        info!(
+            "Connecting to streaming api for vehicle {}",
+            vehicle.display_name
+        );
+
+        let (mut socket, response) =
+            connect(Url::parse("wss://streaming.vn.teslamotors.com/streaming/")?)?;
+
+        debug!("Connected to the server");
+        debug!("Response HTTP code: {}", response.status());
+        debug!("Response contains the following headers:");
+        for (ref header, _value) in response.headers() {
+            debug!("* {}", header);
+        }
+
+        let subscribe_message = TeslaStreamingApiMessage {
+            msg_type: "data:subscribe_oauth".into(),
+            tag: vehicle.vehicle_id.to_string(),
+            token: Some(token.access_token.clone()),
+            value: "est_lat,est_lng,power".into(),
+        };
+
+        socket.write_message(Message::Text(serde_json::to_string(&subscribe_message)?))?;
+        loop {
+            let msg = socket.read_message()?;
+            debug!("Received: {}", msg);
+
+            if !msg.is_text() {
+                continue;
+            }
+
+            let msg_text = msg.into_text()?;
+            let msg_value: serde_json::Value = serde_json::from_str(&msg_text)?;
+            if let Value::String(msg_type) = &msg_value["msg_type"] {
+                if msg_type == "data:update" {
+                    let data_update_message: TeslaStreamingApiMessage =
+                        serde_json::from_str(&msg_text)?;
+
+                    if data_update_message.tag != vehicle.vehicle_id.to_string() {
+                        warn!("Receiving data for another vehicle");
+                        continue;
+                    }
+
+                    let values: Vec<String> = data_update_message
+                        .value
+                        .split(',')
+                        .map(str::to_string)
+                        .collect();
+
+                    if values.len() != 4 {
+                        warn!("Receiving incorrect number of values");
+                        continue;
+                    }
+
+                    return Ok(TeslaVehicleStreamingData {
+                        latitude: values
+                            .get(1)
+                            .unwrap_or(&"0.0".to_string())
+                            .parse()
+                            .unwrap_or(0.0),
+                        longitude: values
+                            .get(2)
+                            .unwrap_or(&"0.0".to_string())
+                            .parse()
+                            .unwrap_or(0.0),
+                        charger_power: values
+                            .get(3)
+                            .unwrap_or(&"0.0".to_string())
+                            .parse()
+                            .unwrap_or(0.0),
+                        charge_energy_added: 0.0,
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -221,6 +307,42 @@ mod tests {
         for vehicle in vehicles {
             let vehicle_charge_state = tesla_api_client
                 .get_vehicle_data(&token, &vehicle)
+                .expect("Failed getting vehicle charge state");
+
+            debug!("{:?}", vehicle_charge_state);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn get_streaming_data() {
+        let tesla_api_client = TeslaApiClient::new();
+
+        let refresh_token = env::var("TESLA_AUTH_REFRESH_TOKEN")
+            .expect("Environment variable TESLA_AUTH_REFRESH_TOKEN not set");
+
+        let config: Config = Config {
+            refresh_token: refresh_token,
+            geofences: vec![GeofenceConfig {
+                location: "My Home".into(),
+                latitude: 0.0,
+                longitude: 0.0,
+                geofence_radius_meters: 100.0,
+            }],
+        };
+
+        // act
+        let token = tesla_api_client
+            .get_access_token(&config)
+            .expect("Failed getting access token");
+
+        let vehicles = tesla_api_client
+            .get_vehicles(&token)
+            .expect("Failed retrieving vehicles");
+
+        for vehicle in vehicles {
+            let vehicle_charge_state = tesla_api_client
+                .get_streaming_data(&token, &vehicle)
                 .expect("Failed getting vehicle charge state");
 
             debug!("{:?}", vehicle_charge_state);

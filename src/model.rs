@@ -128,8 +128,8 @@ impl TeslaVehicleData {
 pub struct TeslaVehicleStreamingData {
     pub latitude: f64,
     pub longitude: f64,
-    pub charge_energy_added: f64,
     pub charger_power: f64,
+    pub odometer: f64,
 }
 
 impl TeslaVehicleStreamingData {

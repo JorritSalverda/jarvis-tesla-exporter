@@ -39,9 +39,10 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 vehicle.display_name, vehicle.state
             );
 
-            let (location, charger_power, charge_energy_added) = if vehicle.in_service
+            let (location, charger_power, charge_energy_added, odometer) = if vehicle.in_service
                 || vehicle.state == TeslaVehicleState::Asleep
             {
+                info!("Vehicle is asleep or in service");
                 // vehicle is asleep or in service, return some defaults
                 let location = if let Some(last_measurement) = &last_measurement {
                     last_measurement.location.clone()
@@ -49,8 +50,25 @@ impl MeasurementClient<Config> for TeslaApiClient {
                     "Other".to_string()
                 };
 
-                (location, 0.0, 0.0)
+                let last_odometer: f64 = if let Some(last_measurement) = last_measurement.as_ref() {
+                    last_measurement
+                        .samples
+                        .iter()
+                        .find(|s| {
+                            s.entity_type == EntityType::Device
+                                && s.sample_type == SampleType::DistanceTraveled
+                                && s.sample_name == vehicle.display_name
+                                && s.metric_type == MetricType::Counter
+                        })
+                        .map(|s| s.value)
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+
+                (location, 0.0, 0.0, last_odometer)
             } else {
+                info!("Vehicle is awake");
                 // vehicle is online; get stream to check location and power without keeping vehicle awake
                 let vehicle_data = self.get_streaming_data(&token, &vehicle)?;
 
@@ -58,8 +76,10 @@ impl MeasurementClient<Config> for TeslaApiClient {
                     info!("Vehicle is inside geofence {}", geofence.location);
                     geofence.location
                 } else if let Some(last_measurement) = &last_measurement {
+                    info!("Vehicle is outside all geofences");
                     last_measurement.location.clone()
                 } else {
+                    info!("Vehicle is outside all geofences");
                     "Other".to_string()
                 };
 
@@ -93,7 +113,15 @@ impl MeasurementClient<Config> for TeslaApiClient {
                     0.0
                 };
 
-                (location, current_charger_power, current_charge_energy_added)
+                // convert miles to meters
+                let current_odometer = vehicle_data.odometer * 1609.344;
+
+                (
+                    location,
+                    current_charger_power,
+                    current_charge_energy_added,
+                    current_odometer,
+                )
             };
 
             let mut measurement = Measurement {
@@ -119,9 +147,19 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 entity_type: EntityType::Device,
                 entity_name: "jarvis-tesla-exporter".into(),
                 sample_type: SampleType::ElectricityConsumption,
-                sample_name: vehicle.display_name,
+                sample_name: vehicle.display_name.clone(),
                 metric_type: MetricType::Counter,
                 value: charge_energy_added,
+            });
+
+            // odometer counter
+            measurement.samples.push(Sample {
+                entity_type: EntityType::Device,
+                entity_name: "jarvis-tesla-exporter".into(),
+                sample_type: SampleType::DistanceTraveled,
+                sample_name: vehicle.display_name,
+                metric_type: MetricType::Counter,
+                value: odometer,
             });
 
             Ok(Some(measurement))
@@ -193,7 +231,6 @@ impl TeslaApiClient {
         Ok(vehicles_response.response)
     }
 
-    #[allow(dead_code)]
     pub fn get_vehicle_data(
         &self,
         token: &TeslaAccessToken,
@@ -219,9 +256,6 @@ impl TeslaApiClient {
             },
         )?
         .json()?;
-
-        // on error returns
-        // {"response":null,"error":"vehicle unavailable: {:error=>\"vehicle unavailable:\"}","error_description":""}
 
         Ok(vehicle_data_response.response)
     }
@@ -250,7 +284,7 @@ impl TeslaApiClient {
             msg_type: "data:subscribe_oauth".into(),
             tag: vehicle.vehicle_id.to_string(),
             token: Some(token.access_token.clone()),
-            value: "est_lat,est_lng,power,speed".into(),
+            value: "est_lat,est_lng,power,speed,odometer".into(),
         };
 
         socket.write_message(Message::Text(serde_json::to_string(&subscribe_message)?))?;
@@ -292,7 +326,7 @@ impl TeslaApiClient {
                             .map(str::to_string)
                             .collect();
 
-                        if values.len() != 5 {
+                        if values.len() != 6 {
                             warn!("Receiving incorrect number of values");
                             continue;
                         }
@@ -323,7 +357,11 @@ impl TeslaApiClient {
                             } else {
                                 0.0
                             },
-                            charge_energy_added: 0.0,
+                            odometer: values
+                                .get(5)
+                                .unwrap_or(&"0.0".to_string())
+                                .parse()
+                                .unwrap_or(0.0),
                         });
                     }
                     "data:error" => {

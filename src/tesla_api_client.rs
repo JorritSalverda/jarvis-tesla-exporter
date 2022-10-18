@@ -33,45 +33,37 @@ impl MeasurementClient<Config> for TeslaApiClient {
 
         let vehicles = self.get_vehicles(&token)?;
 
-        for vehicle in vehicles {
+        if let Some(vehicle) = vehicles.into_iter().next() {
             debug!(
                 "State for vehicle {}: {:?}",
                 vehicle.display_name, vehicle.state
             );
 
-            if vehicle.in_service || vehicle.state == TeslaVehicleState::Asleep {
-                info!("Vehicle is in service or asleep, skip storing samples");
-                continue;
-            }
-
-            let vehicle_data = self.get_streaming_data(&token, &vehicle)?;
-
-            if let Some(geofence) = vehicle_data.in_geofence(&config.geofences) {
-                info!(
-                    "Vehicle is inside geofence {}, storing samples",
-                    geofence.location
-                );
-
-                let mut measurement = Measurement {
-                    id: Uuid::new_v4().to_string(),
-                    source: String::from("jarvis-tesla-exporter"),
-                    location: geofence.location,
-                    samples: Vec::new(),
-                    measured_at_time: Utc::now(),
+            let (location, charger_power, charge_energy_added) = if vehicle.in_service
+                || vehicle.state == TeslaVehicleState::Asleep
+            {
+                // vehicle is asleep or in service, return some defaults
+                let location = if let Some(last_measurement) = &last_measurement {
+                    last_measurement.location.clone()
+                } else {
+                    "Other".to_string()
                 };
 
-                // store as gauge for timeline graphs
-                let current_charger_power = vehicle_data.charger_power * 1000.0;
-                measurement.samples.push(Sample {
-                    entity_type: EntityType::Device,
-                    entity_name: "jarvis-tesla-exporter".into(),
-                    sample_type: SampleType::ElectricityConsumption,
-                    sample_name: vehicle.display_name.clone(),
-                    metric_type: MetricType::Gauge,
-                    value: current_charger_power,
-                });
+                (location, 0.0, 0.0)
+            } else {
+                // vehicle is online; get stream to check location and power without keeping vehicle awake
+                let vehicle_data = self.get_streaming_data(&token, &vehicle)?;
 
-                // store as counter for totals
+                let location = if let Some(geofence) = vehicle_data.in_geofence(&config.geofences) {
+                    info!("Vehicle is inside geofence {}", geofence.location);
+                    geofence.location
+                } else if let Some(last_measurement) = &last_measurement {
+                    last_measurement.location.clone()
+                } else {
+                    "Other".to_string()
+                };
+
+                let current_charger_power = vehicle_data.charger_power * 1000.0;
                 let last_charger_power: f64 =
                     if let Some(last_measurement) = last_measurement.as_ref() {
                         last_measurement
@@ -88,6 +80,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                     } else {
                         0.0
                     };
+
                 let current_charge_energy_added = if vehicle_data.charger_power > 0.0
                     || last_charger_power > 0.0 && vehicle_data.charger_power == 0.0
                 {
@@ -97,43 +90,44 @@ impl MeasurementClient<Config> for TeslaApiClient {
 
                     vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0
                 } else {
-                    let last_charge_energy_added: f64 =
-                        if let Some(last_measurement) = last_measurement {
-                            last_measurement
-                                .samples
-                                .iter()
-                                .find(|s| {
-                                    s.entity_type == EntityType::Device
-                                        && s.sample_type == SampleType::ElectricityConsumption
-                                        && s.sample_name == vehicle.display_name
-                                        && s.metric_type == MetricType::Counter
-                                })
-                                .map(|s| s.value)
-                                .unwrap_or(0.0)
-                        } else {
-                            0.0
-                        };
-
-                    last_charge_energy_added
+                    0.0
                 };
-                measurement.samples.push(Sample {
-                    entity_type: EntityType::Device,
-                    entity_name: "jarvis-tesla-exporter".into(),
-                    sample_type: SampleType::ElectricityConsumption,
-                    sample_name: vehicle.display_name,
-                    metric_type: MetricType::Counter,
-                    value: current_charge_energy_added,
-                });
 
-                return Ok(Some(measurement));
-            } else {
-                info!("Vehicle is not inside geofence, skip storing samples");
-                continue;
-            }
+                (location, current_charger_power, current_charge_energy_added)
+            };
+
+            let mut measurement = Measurement {
+                id: Uuid::new_v4().to_string(),
+                source: String::from("jarvis-tesla-exporter"),
+                location,
+                samples: Vec::new(),
+                measured_at_time: Utc::now(),
+            };
+
+            // store as gauge for timeline graphs
+            measurement.samples.push(Sample {
+                entity_type: EntityType::Device,
+                entity_name: "jarvis-tesla-exporter".into(),
+                sample_type: SampleType::ElectricityConsumption,
+                sample_name: vehicle.display_name.clone(),
+                metric_type: MetricType::Gauge,
+                value: charger_power,
+            });
+
+            // store as counter for totals
+            measurement.samples.push(Sample {
+                entity_type: EntityType::Device,
+                entity_name: "jarvis-tesla-exporter".into(),
+                sample_type: SampleType::ElectricityConsumption,
+                sample_name: vehicle.display_name,
+                metric_type: MetricType::Counter,
+                value: charge_energy_added,
+            });
+
+            Ok(Some(measurement))
+        } else {
+            Ok(None)
         }
-
-        info!("No vehicles were inside of any of the configured geofences and awake");
-        Ok(None)
     }
 }
 

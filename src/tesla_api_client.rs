@@ -101,17 +101,16 @@ impl MeasurementClient<Config> for TeslaApiClient {
                         0.0
                     };
 
-                let current_charge_energy_added = if vehicle_data.charger_power > 0.0
-                    || last_charger_power > 0.0 && vehicle_data.charger_power == 0.0
-                {
-                    // get vehicle data through regular api if vehicle is charging or has just finished charging
-                    // skip otherwise, because it keeps the vehicle awake
-                    let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
+                let current_charge_energy_added =
+                    if vehicle_data.charger_power > 0.0 || last_charger_power > 0.0 {
+                        // get vehicle data through regular api if vehicle is charging or has just finished charging
+                        // skip otherwise, because it keeps the vehicle awake
+                        let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
 
-                    vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0
-                } else {
-                    0.0
-                };
+                        vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0
+                    } else {
+                        0.0
+                    };
 
                 // convert miles to meters
                 let current_odometer = vehicle_data.odometer * 1609.344;
@@ -349,11 +348,12 @@ impl TeslaApiClient {
                                 .parse()
                                 .unwrap_or(0.0),
                             charger_power: if speed == 0.0 {
-                                -1.0 * values
+                                values
                                     .get(3)
                                     .unwrap_or(&"0.0".to_string())
-                                    .parse()
+                                    .parse::<f64>()
                                     .unwrap_or(0.0)
+                                    .abs()
                             } else {
                                 0.0
                             },

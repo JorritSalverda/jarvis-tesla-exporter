@@ -43,7 +43,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 || vehicle.state == TeslaVehicleState::Asleep
             {
                 info!("Vehicle is asleep or in service");
-                // vehicle is asleep or in service, return some defaults
+                // vehicle is asleep or in service, return default values
                 let location = if let Some(last_measurement) = &last_measurement {
                     last_measurement.location.clone()
                 } else {
@@ -70,57 +70,88 @@ impl MeasurementClient<Config> for TeslaApiClient {
             } else {
                 info!("Vehicle is awake");
                 // vehicle is online; get stream to check location and power without keeping vehicle awake
-                let vehicle_data = self.get_streaming_data(&token, &vehicle)?;
+                match self.get_streaming_data(&token, &vehicle) {
+                    Ok(vehicle_data) => {
+                        let location =
+                            if let Some(geofence) = vehicle_data.in_geofence(&config.geofences) {
+                                info!("Vehicle is inside geofence {}", geofence.location);
+                                geofence.location
+                            } else if let Some(last_measurement) = &last_measurement {
+                                info!("Vehicle is outside all geofences");
+                                last_measurement.location.clone()
+                            } else {
+                                info!("Vehicle is outside all geofences");
+                                "Other".to_string()
+                            };
 
-                let location = if let Some(geofence) = vehicle_data.in_geofence(&config.geofences) {
-                    info!("Vehicle is inside geofence {}", geofence.location);
-                    geofence.location
-                } else if let Some(last_measurement) = &last_measurement {
-                    info!("Vehicle is outside all geofences");
-                    last_measurement.location.clone()
-                } else {
-                    info!("Vehicle is outside all geofences");
-                    "Other".to_string()
-                };
+                        let current_charger_power = vehicle_data.charger_power * 1000.0;
+                        let last_charger_power: f64 =
+                            if let Some(last_measurement) = last_measurement.as_ref() {
+                                last_measurement
+                                    .samples
+                                    .iter()
+                                    .find(|s| {
+                                        s.entity_type == EntityType::Device
+                                            && s.sample_type == SampleType::ElectricityConsumption
+                                            && s.sample_name == vehicle.display_name
+                                            && s.metric_type == MetricType::Gauge
+                                    })
+                                    .map(|s| s.value)
+                                    .unwrap_or(0.0)
+                            } else {
+                                0.0
+                            };
 
-                let current_charger_power = vehicle_data.charger_power * 1000.0;
-                let last_charger_power: f64 =
-                    if let Some(last_measurement) = last_measurement.as_ref() {
-                        last_measurement
-                            .samples
-                            .iter()
-                            .find(|s| {
-                                s.entity_type == EntityType::Device
-                                    && s.sample_type == SampleType::ElectricityConsumption
-                                    && s.sample_name == vehicle.display_name
-                                    && s.metric_type == MetricType::Gauge
-                            })
-                            .map(|s| s.value)
-                            .unwrap_or(0.0)
-                    } else {
-                        0.0
-                    };
+                        let current_charge_energy_added =
+                            if vehicle_data.charger_power > 0.0 || last_charger_power > 0.0 {
+                                // get vehicle data through regular api if vehicle is charging or has just finished charging
+                                // skip otherwise, because it keeps the vehicle awake
+                                let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
 
-                let current_charge_energy_added =
-                    if vehicle_data.charger_power > 0.0 || last_charger_power > 0.0 {
-                        // get vehicle data through regular api if vehicle is charging or has just finished charging
-                        // skip otherwise, because it keeps the vehicle awake
-                        let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
+                                vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0
+                            } else {
+                                0.0
+                            };
 
-                        vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0
-                    } else {
-                        0.0
-                    };
+                        // convert miles to meters
+                        let current_odometer = vehicle_data.odometer * 1609.344;
 
-                // convert miles to meters
-                let current_odometer = vehicle_data.odometer * 1609.344;
+                        (
+                            location,
+                            current_charger_power,
+                            current_charge_energy_added,
+                            current_odometer,
+                        )
+                    }
+                    Err(e) => {
+                        warn!("Stream returned error {}", e);
+                        info!("Vehicle doesn't seem awake, handling like it's asleep");
+                        let location = if let Some(last_measurement) = &last_measurement {
+                            last_measurement.location.clone()
+                        } else {
+                            "Other".to_string()
+                        };
 
-                (
-                    location,
-                    current_charger_power,
-                    current_charge_energy_added,
-                    current_odometer,
-                )
+                        let last_odometer: f64 =
+                            if let Some(last_measurement) = last_measurement.as_ref() {
+                                last_measurement
+                                    .samples
+                                    .iter()
+                                    .find(|s| {
+                                        s.entity_type == EntityType::Device
+                                            && s.sample_type == SampleType::DistanceTraveled
+                                            && s.sample_name == vehicle.display_name
+                                            && s.metric_type == MetricType::Counter
+                                    })
+                                    .map(|s| s.value)
+                                    .unwrap_or(0.0)
+                            } else {
+                                0.0
+                            };
+
+                        (location, 0.0, 0.0, last_odometer)
+                    }
+                }
             };
 
             let mut measurement = Measurement {
@@ -274,23 +305,19 @@ impl TeslaApiClient {
 
         debug!("Connected to the server");
         debug!("Response HTTP code: {}", response.status());
-        debug!("Response contains the following headers:");
-        for (ref header, _value) in response.headers() {
-            debug!("* {}", header);
-        }
 
         let subscribe_message = TeslaStreamingApiMessage {
             msg_type: "data:subscribe_oauth".into(),
             tag: vehicle.vehicle_id.to_string(),
             token: Some(token.access_token.clone()),
-            value: "est_lat,est_lng,power,speed,odometer".into(),
+            value: "speed,odometer,soc,elevation,est_heading,est_lat,est_lng,power,shift_state,range,est_range,heading".into(),
         };
 
         socket.write_message(Message::Text(serde_json::to_string(&subscribe_message)?))?;
         let start = Instant::now();
         loop {
-            if start.elapsed().as_secs() > 300 {
-                return Err(Box::<dyn Error>::from("Timed out after 300 seconds"));
+            if start.elapsed().as_secs() > 30 {
+                return Err(Box::<dyn Error>::from("Timed out after 30 seconds"));
             };
 
             let msg = socket.read_message()?;
@@ -325,31 +352,31 @@ impl TeslaApiClient {
                             .map(str::to_string)
                             .collect();
 
-                        if values.len() != 6 {
+                        if values.len() != 13 {
                             warn!("Receiving incorrect number of values");
                             continue;
                         }
 
                         let speed = values
-                            .get(4)
+                            .get(1)
                             .unwrap_or(&"0.0".to_string())
                             .parse()
                             .unwrap_or(0.0);
 
                         return Ok(TeslaVehicleStreamingData {
                             latitude: values
-                                .get(1)
+                                .get(6)
                                 .unwrap_or(&"0.0".to_string())
                                 .parse()
                                 .unwrap_or(0.0),
                             longitude: values
-                                .get(2)
+                                .get(7)
                                 .unwrap_or(&"0.0".to_string())
                                 .parse()
                                 .unwrap_or(0.0),
                             charger_power: if speed == 0.0 {
                                 values
-                                    .get(3)
+                                    .get(8)
                                     .unwrap_or(&"0.0".to_string())
                                     .parse::<f64>()
                                     .unwrap_or(0.0)
@@ -358,7 +385,7 @@ impl TeslaApiClient {
                                 0.0
                             },
                             odometer: values
-                                .get(5)
+                                .get(2)
                                 .unwrap_or(&"0.0".to_string())
                                 .parse()
                                 .unwrap_or(0.0),

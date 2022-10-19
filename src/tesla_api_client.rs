@@ -72,6 +72,8 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 // vehicle is online; get stream to check location and power without keeping vehicle awake
                 match self.get_streaming_data(&token, &vehicle) {
                     Ok(vehicle_data) => {
+                        debug!("streaming vehicle_data: {:?}", vehicle_data);
+
                         let location =
                             if let Some(geofence) = vehicle_data.in_geofence(&config.geofences) {
                                 info!("Vehicle is inside geofence {}", geofence.location);
@@ -103,10 +105,12 @@ impl MeasurementClient<Config> for TeslaApiClient {
                             };
 
                         let current_charge_energy_added =
-                            if vehicle_data.charger_power > 0.0 || last_charger_power > 0.0 {
+                            if current_charger_power > 0.0 || last_charger_power > 0.0 {
                                 // get vehicle data through regular api if vehicle is charging or has just finished charging
                                 // skip otherwise, because it keeps the vehicle awake
                                 let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
+
+                                debug!("restful vehicle_data: {:?}", vehicle_data);
 
                                 vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0
                             } else {
@@ -191,6 +195,8 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 metric_type: MetricType::Counter,
                 value: odometer,
             });
+
+            debug!("measurement: {:?}", measurement);
 
             Ok(Some(measurement))
         } else {

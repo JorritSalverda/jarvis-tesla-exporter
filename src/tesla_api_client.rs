@@ -367,21 +367,18 @@ impl TeslaApiClient {
         last_measurements: Option<Vec<Measurement>>,
         vehicle: &TeslaVehicle,
     ) -> (String, f64, f64, f64) {
-        let last_measurement: Option<Measurement> =
+        let last_measurement: Option<&Measurement> =
             if let Some(last_measurements) = &last_measurements {
-                last_measurements
-                    .iter()
-                    .find(|lm| {
-                        lm.samples
-                            .iter()
-                            .any(|s| s.sample_name == vehicle.display_name)
-                    })
-                    .cloned()
+                last_measurements.iter().find(|lm| {
+                    lm.samples
+                        .iter()
+                        .any(|s| s.sample_name == vehicle.display_name)
+                })
             } else {
                 None
             };
 
-        let last_charger_power: f64 = if let Some(last_measurement) = &last_measurement {
+        let last_charger_power: f64 = if let Some(last_measurement) = last_measurement {
             last_measurement
                 .samples
                 .iter()
@@ -397,7 +394,7 @@ impl TeslaApiClient {
             0.0
         };
 
-        let last_charge_energy_added: f64 = if let Some(last_measurement) = &last_measurement {
+        let last_charge_energy_added: f64 = if let Some(last_measurement) = last_measurement {
             last_measurement
                 .samples
                 .iter()
@@ -413,7 +410,7 @@ impl TeslaApiClient {
             0.0
         };
 
-        let last_odometer: f64 = if let Some(last_measurement) = last_measurement.as_ref() {
+        let last_odometer: f64 = if let Some(last_measurement) = last_measurement {
             last_measurement
                 .samples
                 .iter()
@@ -429,7 +426,7 @@ impl TeslaApiClient {
             0.0
         };
 
-        let last_location = if let Some(last_measurement) = &last_measurement {
+        let last_location = if let Some(last_measurement) = last_measurement {
             last_measurement.location.clone()
         } else {
             "Other".to_string()

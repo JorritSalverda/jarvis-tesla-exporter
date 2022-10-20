@@ -43,13 +43,20 @@ impl MeasurementClient<Config> for TeslaApiClient {
             let (last_location, last_charger_power, last_charge_energy_added, last_odometer) =
                 self.get_last_values(&last_measurements, &vehicle);
 
-            let (location, charger_power, charge_energy_added, odometer) = if vehicle.in_service
+            let (location, charger_power, charge_energy_added, odometer, availability) = if vehicle
+                .in_service
                 || vehicle.state == TeslaVehicleState::Asleep
             {
                 info!("Vehicle is asleep or in service");
 
                 // vehicle is asleep or in service, return last values
-                (last_location, 0.0, last_charge_energy_added, last_odometer)
+                (
+                    last_location,
+                    0.0,
+                    last_charge_energy_added,
+                    last_odometer,
+                    false,
+                )
             } else {
                 info!("Vehicle is awake");
                 // vehicle is online; get stream to check location and power without keeping vehicle awake
@@ -95,13 +102,20 @@ impl MeasurementClient<Config> for TeslaApiClient {
                             current_charger_power,
                             current_charge_energy_added,
                             current_odometer,
+                            true,
                         )
                     }
                     Err(e) => {
                         warn!("Stream returned error {}", e);
                         info!("Vehicle doesn't seem awake, handling like it's asleep");
 
-                        (last_location, 0.0, last_charge_energy_added, last_odometer)
+                        (
+                            last_location,
+                            0.0,
+                            last_charge_energy_added,
+                            last_odometer,
+                            false,
+                        )
                     }
                 }
             };
@@ -139,9 +153,19 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 entity_type: EntityType::Device,
                 entity_name: "jarvis-tesla-exporter".into(),
                 sample_type: SampleType::DistanceTraveled,
-                sample_name: vehicle.display_name,
+                sample_name: vehicle.display_name.clone(),
                 metric_type: MetricType::Counter,
                 value: odometer,
+            });
+
+            // availability
+            measurement.samples.push(Sample {
+                entity_type: EntityType::Device,
+                entity_name: "jarvis-tesla-exporter".into(),
+                sample_type: SampleType::Availability,
+                sample_name: vehicle.display_name,
+                metric_type: MetricType::Gauge,
+                value: if availability { 1.0 } else { 0.0 },
             });
 
             debug!("measurement: {:?}", measurement);

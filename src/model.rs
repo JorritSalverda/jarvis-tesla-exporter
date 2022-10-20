@@ -130,21 +130,7 @@ pub struct TeslaVehicleData {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct TeslaVehicleChargeState {
-    pub battery_level: f64,
-    pub charge_amps: f64,
-    pub charge_current_request: f64,
-    pub charge_current_request_max: f64,
-    pub charge_enable_request: bool,
     pub charge_energy_added: f64,
-    pub charge_rate: f64,
-
-    pub charger_actual_current: f64,
-    pub charger_phases: f64,
-    pub charger_power: f64,
-    pub charger_voltage: f64,
-    pub charging_state: String,
-
-    pub timestamp: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

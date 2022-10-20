@@ -4,7 +4,7 @@ use std::time::Instant;
 use chrono::Utc;
 use jarvis_lib::model::{EntityType, MetricType, Sample, SampleType};
 use jarvis_lib::{measurement_client::MeasurementClient, model::Measurement};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use reqwest::Url;
 use retry::delay::{jitter, Exponential};
 use retry::retry;
@@ -254,7 +254,7 @@ impl TeslaApiClient {
 
         debug!("GET {}", url);
 
-        let vehicle_data_response: TeslaApiResponse<TeslaVehicleData> = retry(
+        let vehicle_data_response: TeslaApiResponse<TeslaVehicleData> = match retry(
             Exponential::from_millis_with_factor(RETRY_INTERVAL_MS, RETRY_FACTOR)
                 .map(jitter)
                 .take(RETRY_TAKES),
@@ -264,8 +264,22 @@ impl TeslaApiClient {
                     .bearer_auth(token.access_token.clone())
                     .send()
             },
-        )?
-        .json()?;
+        ) {
+            Ok(response) => {
+                debug!("Response: {:?}", response);
+                match response.json() {
+                    Ok(vehicle_data_response) => vehicle_data_response,
+                    Err(e) => {
+                        error!("Error: {}", e);
+                        return Err(Box::<dyn Error>::from(e));
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Error: {}", e);
+                return Err(Box::<dyn Error>::from(e));
+            }
+        };
 
         Ok(vehicle_data_response.response)
     }

@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::model::{
     Config, TeslaAccessToken, TeslaAccessTokenRequest, TeslaApiResponse, TeslaStreamingApiMessage,
-    TeslaVehicle, TeslaVehicleData, TeslaVehicleState, TeslaVehicleStreamingData,
+    TeslaVehicle, TeslaVehicleChargeState, TeslaVehicleState, TeslaVehicleStreamingData,
 };
 
 const RETRY_INTERVAL_MS: u64 = 100;
@@ -70,7 +70,12 @@ impl MeasurementClient<Config> for TeslaApiClient {
             } else {
                 info!("Vehicle is awake");
                 // vehicle is online; get stream to check location and power without keeping vehicle awake
-                match self.get_streaming_data(&token, &vehicle) {
+                match retry(
+                    Exponential::from_millis_with_factor(RETRY_INTERVAL_MS, RETRY_FACTOR)
+                        .map(jitter)
+                        .take(RETRY_TAKES),
+                    || self.get_streaming_data(&token, &vehicle),
+                ) {
                     Ok(vehicle_data) => {
                         debug!("streaming vehicle_data: {:?}", vehicle_data);
 
@@ -108,11 +113,12 @@ impl MeasurementClient<Config> for TeslaApiClient {
                             if current_charger_power > 0.0 || last_charger_power > 0.0 {
                                 // get vehicle data through regular api if vehicle is charging or has just finished charging
                                 // skip otherwise, because it keeps the vehicle awake
-                                let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
+                                let vehicle_charge_state =
+                                    self.get_vehicle_charge_state(&token, &vehicle)?;
 
                                 debug!("restful vehicle_data: {:?}", vehicle_data);
 
-                                vehicle_data.charge_state.charge_energy_added * 1000.0 * 3600.0
+                                vehicle_charge_state.charge_energy_added * 1000.0 * 3600.0
                             } else {
                                 0.0
                             };
@@ -267,20 +273,23 @@ impl TeslaApiClient {
         Ok(vehicles_response.response)
     }
 
-    pub fn get_vehicle_data(
+    pub fn get_vehicle_charge_state(
         &self,
         token: &TeslaAccessToken,
         vehicle: &TeslaVehicle,
-    ) -> Result<TeslaVehicleData, Box<dyn std::error::Error>> {
-        info!("Fetching vehicle date for {}...", vehicle.display_name);
+    ) -> Result<TeslaVehicleChargeState, Box<dyn std::error::Error>> {
+        info!(
+            "Fetching vehicle charge state for {}...",
+            vehicle.display_name
+        );
         let url = format!(
-            "https://owner-api.teslamotors.com/api/1/vehicles/{}/vehicle_data",
+            "https://owner-api.teslamotors.com/api/1/vehicles/{}/data_request/charge_state",
             vehicle.id
         );
 
         debug!("GET {}", url);
 
-        let vehicle_data_response: TeslaApiResponse<TeslaVehicleData> = retry(
+        let vehicle_data_response: TeslaApiResponse<TeslaVehicleChargeState> = retry(
             Exponential::from_millis_with_factor(RETRY_INTERVAL_MS, RETRY_FACTOR)
                 .map(jitter)
                 .take(RETRY_TAKES),
@@ -422,7 +431,7 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn get_vehicle_data() {
+    fn get_vehicle_charge_state() {
         let tesla_api_client = TeslaApiClient::new();
 
         let refresh_token = env::var("TESLA_AUTH_REFRESH_TOKEN")
@@ -449,7 +458,7 @@ mod tests {
 
         for vehicle in vehicles {
             let vehicle_charge_state = tesla_api_client
-                .get_vehicle_data(&token, &vehicle)
+                .get_vehicle_charge_state(&token, &vehicle)
                 .expect("Failed getting vehicle charge state");
 
             debug!("{:?}", vehicle_charge_state);

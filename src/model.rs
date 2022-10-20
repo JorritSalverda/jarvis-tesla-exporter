@@ -84,47 +84,6 @@ pub struct TeslaVehicle {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "snake_case")]
-pub struct TeslaVehicleData {
-    pub id: usize,
-    pub user_id: usize,
-    pub vehicle_id: usize,
-    pub vin: String,
-    pub display_name: String,
-    pub state: TeslaVehicleState,
-    pub in_service: bool,
-
-    pub charge_state: TeslaVehicleChargeState,
-    pub drive_state: TeslaVehicleDriveState,
-}
-
-impl TeslaVehicleData {
-    #[allow(dead_code)]
-    pub fn inside_geofence(&self, geofence: &GeofenceConfig) -> bool {
-        let tesla_location = Location::new(self.drive_state.latitude, self.drive_state.longitude);
-        let geofence_location = Location::new(geofence.latitude, geofence.longitude);
-
-        tesla_location
-            .is_in_circle(
-                &geofence_location,
-                Distance::from_meters(geofence.geofence_radius_meters),
-            )
-            .unwrap_or(false)
-    }
-
-    #[allow(dead_code)]
-    pub fn in_geofence(&self, geofences: &[GeofenceConfig]) -> Option<GeofenceConfig> {
-        for geofence in geofences {
-            if self.inside_geofence(geofence) {
-                return Some(geofence.clone());
-            }
-        }
-
-        None
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct TeslaVehicleStreamingData {
     pub latitude: f64,
     pub longitude: f64,
@@ -173,16 +132,6 @@ pub struct TeslaVehicleChargeState {
     pub charger_voltage: f64,
     pub charging_state: String,
 
-    pub timestamp: usize,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "snake_case")]
-pub struct TeslaVehicleDriveState {
-    pub gps_as_of: usize,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub heading: f64,
     pub timestamp: usize,
 }
 

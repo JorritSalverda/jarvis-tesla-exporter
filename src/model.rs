@@ -117,6 +117,18 @@ impl TeslaVehicleStreamingData {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
+pub struct TeslaVehicleData {
+    pub id: usize,
+    pub vehicle_id: usize,
+    pub display_name: String,
+    pub state: TeslaVehicleState,
+    pub in_service: bool,
+
+    pub charge_state: Option<TeslaVehicleChargeState>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
 pub struct TeslaVehicleChargeState {
     pub battery_level: f64,
     pub charge_amps: f64,

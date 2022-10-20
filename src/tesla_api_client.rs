@@ -34,21 +34,21 @@ impl MeasurementClient<Config> for TeslaApiClient {
         let token = self.get_access_token(&config)?;
 
         let vehicles = self.get_vehicles(&token)?;
-        if let Some(vehicle) = vehicles.into_iter().next() {
+        for vehicle in vehicles {
             debug!(
                 "State for vehicle {}: {:?}",
                 vehicle.display_name, vehicle.state
             );
 
             let (last_location, last_charger_power, last_charge_energy_added, last_odometer) =
-                self.get_last_values(last_measurements, &vehicle);
+                self.get_last_values(&last_measurements, &vehicle);
 
             let (location, charger_power, charge_energy_added, odometer) = if vehicle.in_service
                 || vehicle.state == TeslaVehicleState::Asleep
             {
                 info!("Vehicle is asleep or in service");
-                // vehicle is asleep or in service, return last values
 
+                // vehicle is asleep or in service, return last values
                 (last_location, 0.0, last_charge_energy_added, last_odometer)
             } else {
                 info!("Vehicle is awake");
@@ -364,7 +364,7 @@ impl TeslaApiClient {
 
     pub fn get_last_values(
         &self,
-        last_measurements: Option<Vec<Measurement>>,
+        last_measurements: &Option<Vec<Measurement>>,
         vehicle: &TeslaVehicle,
     ) -> (String, f64, f64, f64) {
         let last_measurement: Option<&Measurement> =

@@ -24,20 +24,35 @@ const RETRY_TAKES: usize = 3;
 pub struct TeslaApiClient {}
 
 impl MeasurementClient<Config> for TeslaApiClient {
-    fn get_measurement(
+    fn get_measurements(
         &self,
         config: Config,
-        last_measurement: Option<Measurement>,
-    ) -> Result<Option<Measurement>, Box<dyn Error>> {
+        last_measurements: Option<Vec<Measurement>>,
+    ) -> Result<Vec<Measurement>, Box<dyn Error>> {
+        let mut measurements: Vec<Measurement> = vec![];
+
         let token = self.get_access_token(&config)?;
 
         let vehicles = self.get_vehicles(&token)?;
-
         if let Some(vehicle) = vehicles.into_iter().next() {
             debug!(
                 "State for vehicle {}: {:?}",
                 vehicle.display_name, vehicle.state
             );
+
+            let last_measurement: Option<Measurement> =
+                if let Some(last_measurements) = &last_measurements {
+                    last_measurements
+                        .iter()
+                        .find(|lm| {
+                            lm.samples
+                                .iter()
+                                .any(|s| s.sample_name == vehicle.display_name)
+                        })
+                        .cloned()
+                } else {
+                    None
+                };
 
             let (location, charger_power, charge_energy_added, odometer) = if vehicle.in_service
                 || vehicle.state == TeslaVehicleState::Asleep
@@ -50,7 +65,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                     "Other".to_string()
                 };
 
-                let last_odometer: f64 = if let Some(last_measurement) = last_measurement.as_ref() {
+                let last_odometer: f64 = if let Some(last_measurement) = &last_measurement {
                     last_measurement
                         .samples
                         .iter()
@@ -204,10 +219,10 @@ impl MeasurementClient<Config> for TeslaApiClient {
 
             debug!("measurement: {:?}", measurement);
 
-            Ok(Some(measurement))
-        } else {
-            Ok(None)
+            measurements.push(measurement);
         }
+
+        Ok(measurements)
     }
 }
 

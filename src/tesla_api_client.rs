@@ -40,48 +40,16 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 vehicle.display_name, vehicle.state
             );
 
-            let last_measurement: Option<Measurement> =
-                if let Some(last_measurements) = &last_measurements {
-                    last_measurements
-                        .iter()
-                        .find(|lm| {
-                            lm.samples
-                                .iter()
-                                .any(|s| s.sample_name == vehicle.display_name)
-                        })
-                        .cloned()
-                } else {
-                    None
-                };
+            let (last_location, last_charger_power, last_charge_energy_added, last_odometer) =
+                self.get_last_values(last_measurements, &vehicle);
 
             let (location, charger_power, charge_energy_added, odometer) = if vehicle.in_service
                 || vehicle.state == TeslaVehicleState::Asleep
             {
                 info!("Vehicle is asleep or in service");
-                // vehicle is asleep or in service, return default values
-                let location = if let Some(last_measurement) = &last_measurement {
-                    last_measurement.location.clone()
-                } else {
-                    "Other".to_string()
-                };
+                // vehicle is asleep or in service, return last values
 
-                let last_odometer: f64 = if let Some(last_measurement) = &last_measurement {
-                    last_measurement
-                        .samples
-                        .iter()
-                        .find(|s| {
-                            s.entity_type == EntityType::Device
-                                && s.sample_type == SampleType::DistanceTraveled
-                                && s.sample_name == vehicle.display_name
-                                && s.metric_type == MetricType::Counter
-                        })
-                        .map(|s| s.value)
-                        .unwrap_or(0.0)
-                } else {
-                    0.0
-                };
-
-                (location, 0.0, 0.0, last_odometer)
+                (last_location, 0.0, last_charge_energy_added, last_odometer)
             } else {
                 info!("Vehicle is awake");
                 // vehicle is online; get stream to check location and power without keeping vehicle awake
@@ -98,31 +66,12 @@ impl MeasurementClient<Config> for TeslaApiClient {
                             if let Some(geofence) = vehicle_data.in_geofence(&config.geofences) {
                                 info!("Vehicle is inside geofence {}", geofence.location);
                                 geofence.location
-                            } else if let Some(last_measurement) = &last_measurement {
-                                info!("Vehicle is outside all geofences");
-                                last_measurement.location.clone()
                             } else {
                                 info!("Vehicle is outside all geofences");
-                                "Other".to_string()
+                                last_location
                             };
 
                         let current_charger_power = vehicle_data.charger_power * 1000.0;
-                        let last_charger_power: f64 =
-                            if let Some(last_measurement) = last_measurement.as_ref() {
-                                last_measurement
-                                    .samples
-                                    .iter()
-                                    .find(|s| {
-                                        s.entity_type == EntityType::Device
-                                            && s.sample_type == SampleType::ElectricityConsumption
-                                            && s.sample_name == vehicle.display_name
-                                            && s.metric_type == MetricType::Gauge
-                                    })
-                                    .map(|s| s.value)
-                                    .unwrap_or(0.0)
-                            } else {
-                                0.0
-                            };
 
                         let current_charge_energy_added =
                             if current_charger_power > 0.0 || last_charger_power > 0.0 {
@@ -131,11 +80,11 @@ impl MeasurementClient<Config> for TeslaApiClient {
                                 let vehicle_charge_state =
                                     self.get_vehicle_charge_state(&token, &vehicle)?;
 
-                                debug!("restful vehicle_data: {:?}", vehicle_data);
+                                debug!("restful vehicle_charge_state: {:?}", vehicle_charge_state);
 
                                 vehicle_charge_state.charge_energy_added * 1000.0 * 3600.0
                             } else {
-                                0.0
+                                last_charge_energy_added
                             };
 
                         // convert miles to meters
@@ -151,30 +100,8 @@ impl MeasurementClient<Config> for TeslaApiClient {
                     Err(e) => {
                         warn!("Stream returned error {}", e);
                         info!("Vehicle doesn't seem awake, handling like it's asleep");
-                        let location = if let Some(last_measurement) = &last_measurement {
-                            last_measurement.location.clone()
-                        } else {
-                            "Other".to_string()
-                        };
 
-                        let last_odometer: f64 =
-                            if let Some(last_measurement) = last_measurement.as_ref() {
-                                last_measurement
-                                    .samples
-                                    .iter()
-                                    .find(|s| {
-                                        s.entity_type == EntityType::Device
-                                            && s.sample_type == SampleType::DistanceTraveled
-                                            && s.sample_name == vehicle.display_name
-                                            && s.metric_type == MetricType::Counter
-                                    })
-                                    .map(|s| s.value)
-                                    .unwrap_or(0.0)
-                            } else {
-                                0.0
-                            };
-
-                        (location, 0.0, 0.0, last_odometer)
+                        (last_location, 0.0, last_charge_energy_added, last_odometer)
                     }
                 }
             };
@@ -433,6 +360,87 @@ impl TeslaApiClient {
                 }
             }
         }
+    }
+
+    pub fn get_last_values(
+        &self,
+        last_measurements: Option<Vec<Measurement>>,
+        vehicle: &TeslaVehicle,
+    ) -> (String, f64, f64, f64) {
+        let last_measurement: Option<Measurement> =
+            if let Some(last_measurements) = &last_measurements {
+                last_measurements
+                    .iter()
+                    .find(|lm| {
+                        lm.samples
+                            .iter()
+                            .any(|s| s.sample_name == vehicle.display_name)
+                    })
+                    .cloned()
+            } else {
+                None
+            };
+
+        let last_charger_power: f64 = if let Some(last_measurement) = &last_measurement {
+            last_measurement
+                .samples
+                .iter()
+                .find(|s| {
+                    s.entity_type == EntityType::Device
+                        && s.sample_type == SampleType::ElectricityConsumption
+                        && s.sample_name == vehicle.display_name
+                        && s.metric_type == MetricType::Gauge
+                })
+                .map(|s| s.value)
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+
+        let last_charge_energy_added: f64 = if let Some(last_measurement) = &last_measurement {
+            last_measurement
+                .samples
+                .iter()
+                .find(|s| {
+                    s.entity_type == EntityType::Device
+                        && s.sample_type == SampleType::ElectricityConsumption
+                        && s.sample_name == vehicle.display_name
+                        && s.metric_type == MetricType::Counter
+                })
+                .map(|s| s.value)
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+
+        let last_odometer: f64 = if let Some(last_measurement) = last_measurement.as_ref() {
+            last_measurement
+                .samples
+                .iter()
+                .find(|s| {
+                    s.entity_type == EntityType::Device
+                        && s.sample_type == SampleType::DistanceTraveled
+                        && s.sample_name == vehicle.display_name
+                        && s.metric_type == MetricType::Counter
+                })
+                .map(|s| s.value)
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+
+        let last_location = if let Some(last_measurement) = &last_measurement {
+            last_measurement.location.clone()
+        } else {
+            "Other".to_string()
+        };
+
+        (
+            last_location,
+            last_charger_power,
+            last_charge_energy_added,
+            last_odometer,
+        )
     }
 }
 

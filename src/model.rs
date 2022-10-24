@@ -88,6 +88,7 @@ pub struct TeslaVehicleStreamingData {
     pub latitude: f64,
     pub longitude: f64,
     pub charger_power: f64,
+    pub speed: f64,
     pub odometer: f64,
 }
 

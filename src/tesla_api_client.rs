@@ -20,6 +20,7 @@ use crate::model::{
 const RETRY_INTERVAL_MS: u64 = 100;
 const RETRY_FACTOR: f64 = 2.0;
 const RETRY_TAKES: usize = 3;
+const LOCATION_OTHER: &str = "Other";
 
 pub struct TeslaApiClient {}
 
@@ -74,27 +75,29 @@ impl MeasurementClient<Config> for TeslaApiClient {
                                 geofence.location
                             } else {
                                 info!("Vehicle is outside all geofences");
-                                last_location
+                                LOCATION_OTHER.to_string()
                             };
 
                             let current_charger_power = vehicle_data.charger_power * 1000.0;
 
-                            let current_charge_energy_added =
-                                if current_charger_power > 0.0 || last_charger_power > 0.0 {
-                                    // get vehicle data through regular api if vehicle is charging or has just finished charging
-                                    // skip otherwise, because it keeps the vehicle awake
-                                    let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
+                            let current_charge_energy_added = if current_charger_power > 0.0
+                                || last_charger_power > 0.0
+                                || vehicle_data.speed > 0.0
+                            {
+                                // get vehicle data through regular api if vehicle is charging or has just finished charging or is driving
+                                // skip otherwise, because it keeps the vehicle awake
+                                let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
 
-                                    debug!("restful vehicle_charge_state: {:?}", vehicle_data);
+                                debug!("restful vehicle_charge_state: {:?}", vehicle_data);
 
-                                    if let Some(charge_state) = vehicle_data.charge_state {
-                                        charge_state.charge_energy_added * 1000.0 * 3600.0
-                                    } else {
-                                        last_charge_energy_added
-                                    }
+                                if let Some(charge_state) = vehicle_data.charge_state {
+                                    charge_state.charge_energy_added * 1000.0 * 3600.0
                                 } else {
                                     last_charge_energy_added
-                                };
+                                }
+                            } else {
+                                last_charge_energy_added
+                            };
 
                             // convert miles to meters
                             let current_odometer = vehicle_data.odometer * 1609.344;
@@ -378,6 +381,7 @@ impl TeslaApiClient {
                             } else {
                                 0.0
                             },
+                            speed,
                             odometer: values
                                 .get(2)
                                 .unwrap_or(&"0.0".to_string())
@@ -466,7 +470,7 @@ impl TeslaApiClient {
         let last_location = if let Some(last_measurement) = last_measurement {
             last_measurement.location.clone()
         } else {
-            "Other".to_string()
+            LOCATION_OTHER.to_string()
         };
 
         (

@@ -44,86 +44,98 @@ impl MeasurementClient<Config> for TeslaApiClient {
             let (last_location, last_charger_power, last_charge_energy_added, last_odometer) =
                 self.get_last_values(&last_measurements, &vehicle);
 
-            let (location, charger_power, charge_energy_added, odometer, availability) =
-                if vehicle.in_service || vehicle.state == TeslaVehicleState::Asleep {
-                    info!("Vehicle is asleep or in service");
+            let (location, charger_power, charge_energy_added, odometer, availability) = if vehicle
+                .in_service
+                || vehicle.state == TeslaVehicleState::Asleep
+                || vehicle.state == TeslaVehicleState::Offline
+            {
+                info!("Vehicle is asleep, offline or in service");
 
-                    // vehicle is asleep or in service, return last values
-                    (
-                        last_location,
-                        0.0,
-                        last_charge_energy_added,
-                        last_odometer,
-                        false,
-                    )
+                let availability = if vehicle.in_service {
+                    -2.0
+                } else if vehicle.state == TeslaVehicleState::Offline {
+                    -1.0
                 } else {
-                    info!("Vehicle is awake");
-                    // vehicle is online; get stream to check location and power without keeping vehicle awake
-                    match retry(
-                        Exponential::from_millis_with_factor(RETRY_INTERVAL_MS, RETRY_FACTOR)
-                            .map(jitter)
-                            .take(RETRY_TAKES),
-                        || self.get_streaming_data(&token, &vehicle),
-                    ) {
-                        Ok(vehicle_data) => {
-                            debug!("streaming vehicle_data: {:?}", vehicle_data);
+                    0.0
+                };
 
-                            let location = if let Some(geofence) =
-                                vehicle_data.in_geofence(&config.geofences)
-                            {
-                                info!("Vehicle is inside geofence {}", geofence.location);
-                                geofence.location
-                            } else {
-                                info!("Vehicle is outside all geofences");
-                                LOCATION_OTHER.to_string()
-                            };
+                // vehicle is asleep, offline or in service, return last values
+                (
+                    last_location,
+                    0.0,
+                    last_charge_energy_added,
+                    last_odometer,
+                    availability,
+                )
+            } else {
+                info!("Vehicle is awake");
+                // vehicle is online; get stream to check location and power without keeping vehicle awake
+                match retry(
+                    Exponential::from_millis_with_factor(RETRY_INTERVAL_MS, RETRY_FACTOR)
+                        .map(jitter)
+                        .take(RETRY_TAKES),
+                    || self.get_streaming_data(&token, &vehicle),
+                ) {
+                    Ok(vehicle_streaming_data) => {
+                        debug!("vehicle_streaming_data: {:?}", vehicle_streaming_data);
 
-                            let current_charger_power = vehicle_data.charger_power * 1000.0;
-
-                            let current_charge_energy_added = if current_charger_power > 0.0
+                        let location = if let Some(geofence) =
+                            vehicle_streaming_data.in_geofence(&config.geofences)
+                        {
+                            info!("Vehicle is inside geofence {}", geofence.location);
+                            geofence.location
+                        } else {
+                            info!("Vehicle is outside all geofences");
+                            LOCATION_OTHER.to_string()
+                        };
+                        let (current_charge_energy_added, current_charger_power) =
+                            if vehicle_streaming_data.power > 0.0
+                                || vehicle_streaming_data.speed > 0.0
                                 || last_charger_power > 0.0
-                                || vehicle_data.speed > 0.0
                             {
-                                // get vehicle data through regular api if vehicle is charging or has just finished charging or is driving
+                                // get vehicle data through regular api if vehicle is driving, charging or has just finished charging
                                 // skip otherwise, because it keeps the vehicle awake
                                 let vehicle_data = self.get_vehicle_data(&token, &vehicle)?;
 
-                                debug!("restful vehicle_charge_state: {:?}", vehicle_data);
+                                debug!("vehicle_data: {:?}", vehicle_data);
 
                                 if let Some(charge_state) = vehicle_data.charge_state {
-                                    charge_state.charge_energy_added * 1000.0 * 3600.0
+                                    (
+                                        charge_state.charge_energy_added * 1000.0 * 3600.0,
+                                        charge_state.charger_power * 1000.0,
+                                    )
                                 } else {
-                                    last_charge_energy_added
+                                    (last_charge_energy_added, 0.0)
                                 }
                             } else {
-                                last_charge_energy_added
+                                (last_charge_energy_added, 0.0)
                             };
 
-                            // convert miles to meters
-                            let current_odometer = vehicle_data.odometer * 1609.344;
+                        // convert miles to meters
+                        let current_odometer = vehicle_streaming_data.odometer * 1609.344;
 
-                            (
-                                location,
-                                current_charger_power,
-                                current_charge_energy_added,
-                                current_odometer,
-                                true,
-                            )
-                        }
-                        Err(e) => {
-                            warn!("Stream returned error {}", e);
-                            info!("Vehicle doesn't seem awake, handling like it's asleep");
-
-                            (
-                                last_location,
-                                0.0,
-                                last_charge_energy_added,
-                                last_odometer,
-                                false,
-                            )
-                        }
+                        (
+                            location,
+                            current_charger_power,
+                            current_charge_energy_added,
+                            current_odometer,
+                            1.0,
+                        )
                     }
-                };
+                    Err(e) => {
+                        warn!("Stream returned error {}", e);
+                        info!("Vehicle doesn't seem awake, handling like it's asleep");
+
+                        (
+                            last_location,
+                            0.0,
+                            last_charge_energy_added,
+                            last_odometer,
+                            0.0,
+                        )
+                    }
+                }
+            };
 
             let mut measurement = Measurement {
                 id: Uuid::new_v4().to_string(),
@@ -170,7 +182,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 sample_type: SampleType::Availability,
                 sample_name: vehicle.display_name,
                 metric_type: MetricType::Gauge,
-                value: if availability { 1.0 } else { 0.0 },
+                value: availability,
             });
 
             debug!("measurement: {:?}", measurement);
@@ -354,12 +366,6 @@ impl TeslaApiClient {
                             continue;
                         }
 
-                        let speed = values
-                            .get(1)
-                            .unwrap_or(&"0.0".to_string())
-                            .parse()
-                            .unwrap_or(0.0);
-
                         return Ok(TeslaVehicleStreamingData {
                             latitude: values
                                 .get(6)
@@ -371,17 +377,17 @@ impl TeslaApiClient {
                                 .unwrap_or(&"0.0".to_string())
                                 .parse()
                                 .unwrap_or(0.0),
-                            charger_power: if speed == 0.0 {
-                                values
-                                    .get(8)
-                                    .unwrap_or(&"0.0".to_string())
-                                    .parse::<f64>()
-                                    .unwrap_or(0.0)
-                                    .abs()
-                            } else {
-                                0.0
-                            },
-                            speed,
+                            power: values
+                                .get(8)
+                                .unwrap_or(&"0.0".to_string())
+                                .parse::<f64>()
+                                .unwrap_or(0.0)
+                                .abs(),
+                            speed: values
+                                .get(1)
+                                .unwrap_or(&"0.0".to_string())
+                                .parse()
+                                .unwrap_or(0.0),
                             odometer: values
                                 .get(2)
                                 .unwrap_or(&"0.0".to_string())

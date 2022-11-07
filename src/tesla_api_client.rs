@@ -88,9 +88,14 @@ impl MeasurementClient<Config> for TeslaApiClient {
                             info!("Vehicle is outside all geofences");
                             LOCATION_OTHER.to_string()
                         };
+
+                        // convert miles to meters
+                        let current_odometer = vehicle_streaming_data.odometer * 1609.344;
+
                         let (current_charge_energy_added, current_charger_power) =
                             if vehicle_streaming_data.power > 0.0
                                 || vehicle_streaming_data.speed > 0.0
+                                || current_odometer - last_odometer > 0.0
                                 || last_charger_power > 0.0
                             {
                                 // get vehicle data through regular api if vehicle is driving, charging or has just finished charging
@@ -100,19 +105,25 @@ impl MeasurementClient<Config> for TeslaApiClient {
                                 debug!("vehicle_data: {:?}", vehicle_data);
 
                                 if let Some(charge_state) = vehicle_data.charge_state {
-                                    (
-                                        charge_state.charge_energy_added * 1000.0 * 3600.0,
-                                        charge_state.charger_power * 1000.0,
-                                    )
+                                    if charge_state.charge_energy_added * 1000.0 * 3600.0
+                                        <= last_charge_energy_added
+                                        && (vehicle_streaming_data.speed > 0.0
+                                            || current_odometer - last_odometer > 0.0)
+                                    {
+                                        // reset charge energy added when driving but energy added hasn't increased (otherwise it might be the last value for charge added and we're interested in it)
+                                        (0.0, 0.0)
+                                    } else {
+                                        (
+                                            charge_state.charge_energy_added * 1000.0 * 3600.0,
+                                            charge_state.charger_power * 1000.0,
+                                        )
+                                    }
                                 } else {
                                     (last_charge_energy_added, 0.0)
                                 }
                             } else {
                                 (last_charge_energy_added, 0.0)
                             };
-
-                        // convert miles to meters
-                        let current_odometer = vehicle_streaming_data.odometer * 1609.344;
 
                         (
                             location,

@@ -105,18 +105,13 @@ impl MeasurementClient<Config> for TeslaApiClient {
                                 debug!("vehicle_data: {:?}", vehicle_data);
 
                                 if let Some(charge_state) = vehicle_data.charge_state {
-                                    if charge_state.charge_energy_added * 1000.0 * 3600.0
-                                        <= last_charge_energy_added
-                                        && (vehicle_streaming_data.speed > 0.0
-                                            || current_odometer - last_odometer > 0.0)
-                                    {
-                                        // reset charge energy added when driving but energy added hasn't increased (otherwise it might be the last value for charge added and we're interested in it)
-                                        (0.0, 0.0)
-                                    } else {
+                                    if charge_state.charge_port_latch == "Engaged" {
                                         (
                                             charge_state.charge_energy_added * 1000.0 * 3600.0,
                                             charge_state.charger_power * 1000.0,
                                         )
+                                    } else {
+                                        (0.0, 0.0)
                                     }
                                 } else {
                                     (last_charge_energy_added, 0.0)

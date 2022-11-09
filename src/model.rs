@@ -131,6 +131,7 @@ pub struct TeslaVehicleData {
 pub struct TeslaVehicleChargeState {
     pub charge_energy_added: f64,
     pub charger_power: f64,
+    pub charge_port_latch: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

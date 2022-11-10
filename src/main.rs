@@ -9,7 +9,10 @@ use tesla_api_client::TeslaApiClient;
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    json_env_logger::init();
+    tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     let tesla_api_client = TeslaApiClient::new();
 
@@ -38,5 +41,8 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 #[ctor::ctor]
 fn init() {
-    json_env_logger::init();
+    tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 }

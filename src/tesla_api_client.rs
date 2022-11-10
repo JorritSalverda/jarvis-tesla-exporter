@@ -4,11 +4,11 @@ use std::time::Instant;
 use chrono::Utc;
 use jarvis_lib::model::{EntityType, MetricType, Sample, SampleType};
 use jarvis_lib::{measurement_client::MeasurementClient, model::Measurement};
-use log::{debug, error, info, warn};
 use reqwest::Url;
 use retry::delay::{jitter, Exponential};
 use retry::retry;
 use serde_json::Value;
+use tracing::{debug, error, info, warn};
 use tungstenite::{connect, Message};
 use uuid::Uuid;
 

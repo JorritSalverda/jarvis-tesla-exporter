@@ -20,6 +20,6 @@ retry = "1.3"
 tokio = { version = "1.28", features = ["rt", "rt-multi-thread", "macros"] }
 uuid = { version = "0.8", features = ["v4"] }
 jarvis-lib = { git = "https://github.com/JorritSalverda/jarvis-lib", tag = "0.1.65" }
-kube = { version = "0.82", default-features = false, features = ["client", "runtime", "derive"] }
+kube = "0.82"
 tungstenite = { version = "0.17", features = ["native-tls"] }
 openssl = { version = "0.10", features = ["vendored"] }

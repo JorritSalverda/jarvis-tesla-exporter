@@ -1,6 +1,7 @@
-use std::error::Error;
-use std::time::Instant;
-
+use crate::model::{
+    Config, TeslaAccessToken, TeslaAccessTokenRequest, TeslaApiResponse, TeslaStreamingApiMessage,
+    TeslaVehicle, TeslaVehicleData, TeslaVehicleState, TeslaVehicleStreamingData,
+};
 use chrono::Utc;
 use jarvis_lib::model::{EntityType, MetricType, Sample, SampleType};
 use jarvis_lib::{measurement_client::MeasurementClient, model::Measurement};
@@ -8,20 +9,17 @@ use reqwest::Url;
 use retry::delay::{jitter, Exponential};
 use retry::retry;
 use serde_json::Value;
+use std::error::Error;
+use std::time::Instant;
 use tracing::{debug, error, info, warn};
 use tungstenite::{connect, Message};
 use uuid::Uuid;
-
-use crate::model::{
-    Config, TeslaAccessToken, TeslaAccessTokenRequest, TeslaApiResponse, TeslaStreamingApiMessage,
-    TeslaVehicle, TeslaVehicleData, TeslaVehicleState, TeslaVehicleStreamingData,
-};
 
 const RETRY_INTERVAL_MS: u64 = 100;
 const RETRY_FACTOR: f64 = 2.0;
 const RETRY_TAKES: usize = 3;
 const LOCATION_OTHER: &str = "Other";
-
+const DEFAULT_DISPLAY_NAME: &str = "Unknown";
 pub struct TeslaApiClient {}
 
 impl MeasurementClient<Config> for TeslaApiClient {
@@ -36,10 +34,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
 
         let vehicles = self.get_vehicles(&token)?;
         for vehicle in vehicles {
-            debug!(
-                "State for vehicle {}: {:?}",
-                vehicle.display_name, vehicle.state
-            );
+            debug!("State for vehicle {}: {:?}", vehicle.id, vehicle.state);
 
             let (last_location, last_charger_power, last_charge_energy_added, last_odometer) =
                 self.get_last_values(&last_measurements, &vehicle);
@@ -151,12 +146,16 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 measured_at_time: Utc::now(),
             };
 
+            let display_name = vehicle
+                .display_name
+                .map_or(DEFAULT_DISPLAY_NAME.to_string(), |n| n);
+
             // store as gauge for timeline graphs
             measurement.samples.push(Sample {
                 entity_type: EntityType::Device,
                 entity_name: "jarvis-tesla-exporter".into(),
                 sample_type: SampleType::ElectricityConsumption,
-                sample_name: vehicle.display_name.clone(),
+                sample_name: display_name.clone(),
                 metric_type: MetricType::Gauge,
                 value: charger_power,
             });
@@ -166,7 +165,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 entity_type: EntityType::Device,
                 entity_name: "jarvis-tesla-exporter".into(),
                 sample_type: SampleType::ElectricityConsumption,
-                sample_name: vehicle.display_name.clone(),
+                sample_name: display_name.clone(),
                 metric_type: MetricType::Counter,
                 value: charge_energy_added,
             });
@@ -176,7 +175,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 entity_type: EntityType::Device,
                 entity_name: "jarvis-tesla-exporter".into(),
                 sample_type: SampleType::DistanceTraveled,
-                sample_name: vehicle.display_name.clone(),
+                sample_name: display_name.clone(),
                 metric_type: MetricType::Counter,
                 value: odometer,
             });
@@ -186,7 +185,7 @@ impl MeasurementClient<Config> for TeslaApiClient {
                 entity_type: EntityType::Device,
                 entity_name: "jarvis-tesla-exporter".into(),
                 sample_type: SampleType::Availability,
-                sample_name: vehicle.display_name,
+                sample_name: display_name,
                 metric_type: MetricType::Gauge,
                 value: availability,
             });
@@ -267,7 +266,7 @@ impl TeslaApiClient {
         token: &TeslaAccessToken,
         vehicle: &TeslaVehicle,
     ) -> Result<TeslaVehicleData, Box<dyn std::error::Error>> {
-        info!("Fetching vehicle data for {}...", vehicle.display_name);
+        info!("Fetching vehicle data for {:?}...", vehicle.display_name);
         let url = format!(
             "https://owner-api.teslamotors.com/api/1/vehicles/{}/vehicle_data",
             vehicle.id
@@ -311,7 +310,7 @@ impl TeslaApiClient {
         vehicle: &TeslaVehicle,
     ) -> Result<TeslaVehicleStreamingData, Box<dyn Error>> {
         info!(
-            "Connecting to streaming api for vehicle {}",
+            "Connecting to streaming api for vehicle {:?}",
             vehicle.display_name
         );
 
@@ -420,13 +419,16 @@ impl TeslaApiClient {
         last_measurements: &Option<Vec<Measurement>>,
         vehicle: &TeslaVehicle,
     ) -> (String, f64, f64, f64) {
+        let display_name = vehicle
+            .display_name
+            .as_ref()
+            .map_or(DEFAULT_DISPLAY_NAME, |n| n);
+
         let last_measurement: Option<&Measurement> =
             if let Some(last_measurements) = &last_measurements {
-                last_measurements.iter().find(|lm| {
-                    lm.samples
-                        .iter()
-                        .any(|s| s.sample_name == vehicle.display_name)
-                })
+                last_measurements
+                    .iter()
+                    .find(|lm| lm.samples.iter().any(|s| s.sample_name == display_name))
             } else {
                 None
             };
@@ -438,7 +440,7 @@ impl TeslaApiClient {
                 .find(|s| {
                     s.entity_type == EntityType::Device
                         && s.sample_type == SampleType::ElectricityConsumption
-                        && s.sample_name == vehicle.display_name
+                        && s.sample_name == display_name
                         && s.metric_type == MetricType::Gauge
                 })
                 .map(|s| s.value)
@@ -454,7 +456,7 @@ impl TeslaApiClient {
                 .find(|s| {
                     s.entity_type == EntityType::Device
                         && s.sample_type == SampleType::ElectricityConsumption
-                        && s.sample_name == vehicle.display_name
+                        && s.sample_name == display_name
                         && s.metric_type == MetricType::Counter
                 })
                 .map(|s| s.value)
@@ -470,7 +472,7 @@ impl TeslaApiClient {
                 .find(|s| {
                     s.entity_type == EntityType::Device
                         && s.sample_type == SampleType::DistanceTraveled
-                        && s.sample_name == vehicle.display_name
+                        && s.sample_name == display_name
                         && s.metric_type == MetricType::Counter
                 })
                 .map(|s| s.value)

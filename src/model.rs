@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub refresh_token: String,
     pub geofences: Vec<GeofenceConfig>,
+    pub vehicle_ids: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -164,6 +165,8 @@ mod tests {
         assert_eq!(config.geofences[0].latitude, 52.377956);
         assert_eq!(config.geofences[0].longitude, 4.897070);
         assert_eq!(config.geofences[0].geofence_radius_meters, 100.0);
+        assert_eq!(config.vehicle_ids.len(), 1);
+        assert_eq!(config.vehicle_ids[0], "23498074342");
     }
 
     #[test]

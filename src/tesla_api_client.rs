@@ -32,8 +32,10 @@ impl MeasurementClient<Config> for TeslaApiClient {
 
         let token = self.get_access_token(&config)?;
 
-        let vehicles = self.get_vehicles(&token)?;
-        for vehicle in vehicles {
+        for vehicle_id in config.vehicle_ids {
+            // let vehicles = self.get_vehicles(&token)?;
+            // for vehicle in vehicles {
+            let vehicle = self.get_vehicle(&token, &vehicle_id)?;
             debug!("State for vehicle {}: {:?}", vehicle.id, vehicle.state);
 
             let (last_location, last_charger_power, last_charge_energy_added, last_odometer) =
@@ -236,6 +238,7 @@ impl TeslaApiClient {
         Ok(access_token)
     }
 
+    #[allow(dead_code)]
     pub fn get_vehicles(
         &self,
         token: &TeslaAccessToken,
@@ -252,6 +255,35 @@ impl TeslaApiClient {
             || {
                 reqwest::blocking::Client::new()
                     .get(url)
+                    .bearer_auth(token.access_token.clone())
+                    .send()
+            },
+        )?
+        .json()?;
+
+        Ok(vehicles_response.response)
+    }
+
+    pub fn get_vehicle(
+        &self,
+        token: &TeslaAccessToken,
+        vehicle_id: &str,
+    ) -> Result<TeslaVehicle, Box<dyn std::error::Error>> {
+        info!("Fetching vehicles...");
+        let url = format!(
+            "https://owner-api.teslamotors.com/api/1/vehicles/{}",
+            vehicle_id
+        );
+
+        debug!("GET {}", url);
+
+        let vehicles_response: TeslaApiResponse<TeslaVehicle> = retry(
+            Exponential::from_millis_with_factor(RETRY_INTERVAL_MS, RETRY_FACTOR)
+                .map(jitter)
+                .take(RETRY_TAKES),
+            || {
+                reqwest::blocking::Client::new()
+                    .get(&url)
                     .bearer_auth(token.access_token.clone())
                     .send()
             },
@@ -520,6 +552,7 @@ mod tests {
                 longitude: 0.0,
                 geofence_radius_meters: 100.0,
             }],
+            vehicle_ids: vec!["23498074342".into()],
         };
 
         // act
@@ -556,6 +589,7 @@ mod tests {
                 longitude: 0.0,
                 geofence_radius_meters: 100.0,
             }],
+            vehicle_ids: vec!["23498074342".into()],
         };
 
         // act

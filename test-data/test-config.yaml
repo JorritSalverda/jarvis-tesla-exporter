@@ -4,3 +4,5 @@ geofences:
   latitude: 52.377956
   longitude: 4.897070
   geofenceRadiusMeters: 100
+vehicleIds:
+- 23498074342
